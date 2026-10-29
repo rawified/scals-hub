@@ -415,6 +415,23 @@ function Library:Notify(settings)
 		BackgroundTransparency = 1,
 		Parent = notifyHolder,
 	})
+	-- Glow layers sit behind the card (created first); they follow the card's position/fade
+	local glowLayers = {}
+	if GlowEnabled then
+		for i = 1, 5 do
+			local pad = i * 3
+			local fr = create("Frame", {
+				Size = UDim2.new(1, pad * 2, 1, pad * 2),
+				Position = UDim2.fromOffset(40 - pad, -pad),
+				BackgroundColor3 = Theme.Accent,
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Parent = wrapper,
+			})
+			corner(fr, 12 + pad)
+			table.insert(glowLayers, { frame = fr, pad = pad, base = 0.88 + i * 0.02 })
+		end
+	end
 	local card = create("CanvasGroup", {
 		Size = UDim2.fromScale(1, 1),
 		Position = UDim2.fromOffset(40, 0),
@@ -426,6 +443,55 @@ function Library:Notify(settings)
 	})
 	corner(card, 12)
 	hairline(card, 12)
+
+	-- Shine: a bright spot travelling around the card's edge
+	local shineStroke, shineGradient
+	if GlowEnabled then
+		local shine = create("Frame", {
+			Size = UDim2.fromScale(1, 1),
+			Position = UDim2.fromOffset(40, 0),
+			BackgroundTransparency = 1,
+			Parent = wrapper,
+		})
+		corner(shine, 12)
+		shineStroke = create("UIStroke", {
+			Thickness = 1.5,
+			Color = Color3.new(1, 1, 1),
+			Transparency = 1,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+			Parent = shine,
+		})
+		shineGradient = create("UIGradient", {
+			Color = ColorSequence.new(Theme.Accent, Theme.Accent:Lerp(Color3.new(1, 1, 1), 0.65)),
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(0.3, 1),
+				NumberSequenceKeypoint.new(0.5, 0),
+				NumberSequenceKeypoint.new(0.7, 1),
+				NumberSequenceKeypoint.new(1, 1),
+			}),
+			Parent = shineStroke,
+		})
+		local startT = os.clock()
+		local conn
+		conn = RunService.Heartbeat:Connect(function()
+			if not wrapper.Parent then
+				conn:Disconnect()
+				return
+			end
+			local k = 1 - card.GroupTransparency
+			local x = card.Position.X.Offset
+			local t = os.clock() - startT
+			local pulse = 0.8 + 0.2 * math.sin(t * 2)
+			for _, l in ipairs(glowLayers) do
+				l.frame.BackgroundTransparency = 1 - (1 - l.base) * k * pulse
+				l.frame.Position = UDim2.fromOffset(x - l.pad, -l.pad)
+			end
+			shine.Position = UDim2.fromOffset(x, 0)
+			shineStroke.Transparency = 1 - 0.85 * k
+			shineGradient.Rotation = (t * 120) % 360
+		end)
+	end
 
 	local stripe = create("Frame", {
 		Size = UDim2.new(0, 3, 1, -18),
