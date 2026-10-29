@@ -18,6 +18,11 @@
 		Window:CreateTab("Name")
 		Window:Toggle() / :SetVisible(bool) / :SetToggleKey(KeyCode) / :SetInfoBar(bool)
 
+	SPLASH SCREEN (plays on start, any key or click skips it)
+		Library:CreateWindow({ ..., Splash = { Image = "rbxassetid://123", Duration = 4.5, Subtitle = "..." } })
+		Splash = false turns it off. Image can also be a file name in your executor's workspace
+		folder. With no image, the window name is shown in big letters instead.
+
 	ELEMENTS (every one accepts an optional Flag = "SaveName")
 		Tab:CreateButton({Name, Callback})
 		Tab:CreateToggle({Name, CurrentValue, Callback(value), Loop = function() end, Interval = 0.1})
@@ -54,6 +59,17 @@ local Alpha = 0.06           -- window see-through amount (0 = solid)
 local BackdropAlpha = 0.5    -- dark screen behind the window (1 = invisible)
 local SprinkleCount = 130     -- floating specks on the background (0 = off)
 local GlowEnabled = true     -- soft accent glow + moving shine behind the window
+
+----------------------------------------------------------------------
+-- Fonts (swap any of these for a different look)
+----------------------------------------------------------------------
+local Fonts = {
+	Title = Enum.Font.Oswald,       -- window title, notification titles, splash
+	Heading = Enum.Font.GothamBold, -- values, top-bar buttons, emphasis
+	Body = Enum.Font.GothamMedium,  -- labels and tabs
+	Light = Enum.Font.Gotham,       -- inputs and dropdown options
+	Mono = Enum.Font.RobotoMono,    -- info bar
+}
 
 ----------------------------------------------------------------------
 -- Themes
@@ -257,7 +273,7 @@ local function label(parent, text, size, colorKey, align)
 	return create("TextLabel", {
 		BackgroundTransparency = 1,
 		Text = text,
-		Font = Enum.Font.GothamMedium,
+		Font = Fonts.Body,
 		TextSize = size or 14,
 		TextXAlignment = align or Enum.TextXAlignment.Left,
 		Bind = { TextColor3 = colorKey or "Text" },
@@ -320,6 +336,7 @@ function Library:Notify(settings)
 	if not notifyGui or not notifyGui.Parent then
 		notifyGui = create("ScreenGui", {
 			Name = "Notifications",
+			DisplayOrder = 2147483100,
 			ResetOnSpawn = false,
 			Parent = Players.LocalPlayer:WaitForChild("PlayerGui"),
 		})
@@ -363,10 +380,10 @@ function Library:Notify(settings)
 	})
 	corner(stripe, 2)
 
-	local title = label(card, settings.Title or "Notification", 14)
+	local title = label(card, string.upper(settings.Title or "Notification"), 16)
 	title.Size = UDim2.new(1, -30, 0, 22)
 	title.Position = UDim2.fromOffset(20, 5)
-	title.Font = Enum.Font.GothamBold
+	title.Font = Fonts.Title
 	local body = label(card, settings.Content or "", 12, "SubText")
 	body.Size = UDim2.new(1, -30, 0, 26)
 	body.Position = UDim2.fromOffset(20, 28)
@@ -385,6 +402,584 @@ function Library:Notify(settings)
 end
 
 ----------------------------------------------------------------------
+-- Splash screen
+----------------------------------------------------------------------
+-- Accepts "rbxassetid://123", a bare asset id, or a file name in the executor's workspace
+-- folder (needs getcustomasset). Returns nil when nothing usable is given.
+local function resolveImage(img)
+	if type(img) == "number" then
+		return "rbxassetid://" .. tostring(img)
+	end
+	if type(img) ~= "string" or img == "" then
+		return nil
+	end
+	if img:find("^rbxassetid://") or img:find("^rbxasset://") then
+		return img
+	end
+	if tonumber(img) then
+		return "rbxassetid://" .. img
+	end
+	if type(isfile) == "function" and type(getcustomasset) == "function" then
+		local ok, asset = pcall(function()
+			if isfile(img) then
+				return getcustomasset(img)
+			end
+		end)
+		if ok and asset then
+			return asset
+		end
+	end
+	return nil
+end
+
+local function playSplash(opts, windowName, onReveal)
+	local revealed = false
+	local function reveal()
+		if not revealed then
+			revealed = true
+			onReveal()
+		end
+	end
+
+	local image = resolveImage(opts.Image or Library.SplashImage)
+	local duration = math.max(opts.Duration or 4.5, 2.5)
+	local logoName = string.upper(windowName or "Window")
+
+	local gui, loopConn, skipConn
+	local function cleanup()
+		if loopConn then
+			loopConn:Disconnect()
+			loopConn = nil
+		end
+		if skipConn then
+			skipConn:Disconnect()
+			skipConn = nil
+		end
+		if gui then
+			gui:Destroy()
+			gui = nil
+		end
+	end
+
+	task.defer(function()
+		local ok, err = pcall(function()
+			local accent = Theme.Accent
+			local accentLight = accent:Lerp(Color3.new(1, 1, 1), 0.55)
+			local white = Color3.new(1, 1, 1)
+			local rand = math.random
+			local kp = NumberSequenceKeypoint.new
+
+			gui = create("ScreenGui", {
+				Name = "Splash",
+				ResetOnSpawn = false,
+				IgnoreGuiInset = true,
+				DisplayOrder = 2147483647,
+				ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+				Parent = Players.LocalPlayer:WaitForChild("PlayerGui"),
+			})
+			local root = create("CanvasGroup", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundColor3 = Color3.new(0, 0, 0),
+				BorderSizePixel = 0,
+				Parent = gui,
+			})
+
+			-- Animated values (tweened, read every frame)
+			local function num(v)
+				local n = Instance.new("NumberValue")
+				n.Value = v
+				return n
+			end
+			local function tnum(n, target, time, style, dir)
+				return tween(n, { Value = target }, time, style, dir)
+			end
+			local logoAmt, glowAmt, partAmt, glitch, prog = num(0), num(0), num(0), num(0), num(0)
+
+			----------------------------------------------------------
+			-- Frame lines (grow out from the center)
+			----------------------------------------------------------
+			local function accentLine(y)
+				local line = create("Frame", {
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Position = UDim2.fromScale(0.5, y),
+					Size = UDim2.new(0, 0, 0, 1),
+					BackgroundColor3 = accent,
+					BorderSizePixel = 0,
+					Parent = root,
+				})
+				create("UIGradient", {
+					Transparency = NumberSequence.new({ kp(0, 1), kp(0.2, 0.15), kp(0.8, 0.15), kp(1, 1) }),
+					Parent = line,
+				})
+				return line
+			end
+			local lineTop, lineBottom = accentLine(0.1), accentLine(0.9)
+
+			----------------------------------------------------------
+			-- Rising embers + horizontal speed streaks
+			----------------------------------------------------------
+			local particleLayer = create("Frame", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundTransparency = 1,
+				ClipsDescendants = true,
+				Parent = root,
+			})
+			local particles = {}
+			for i = 1, 110 do
+				local size = rand(2, 6)
+				local fr = create("Frame", {
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Size = UDim2.fromOffset(size, size),
+					BackgroundColor3 = (i % 3 == 0) and accent or white,
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Parent = particleLayer,
+				})
+				create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = fr })
+				particles[i] = {
+					frame = fr,
+					x = rand(),
+					y = rand(),
+					speed = 0.02 + rand() * 0.09,
+					drift = 0.3 + rand() * 0.9,
+					phase = rand() * math.pi * 2,
+					twinkle = 1 + rand() * 2.5,
+					alpha = 0.35 + rand() * 0.55,
+				}
+			end
+
+			local streakLayer = create("Frame", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundTransparency = 1,
+				ClipsDescendants = true,
+				Parent = root,
+			})
+			local streaks = {}
+			for i = 1, 14 do
+				local dirn = (i % 2 == 0) and 1 or -1
+				local fr = create("Frame", {
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Size = UDim2.fromOffset(rand(90, 280), rand(1, 2)),
+					BackgroundColor3 = (i % 3 == 0) and accent or white,
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Parent = streakLayer,
+				})
+				create("UIGradient", {
+					Transparency = NumberSequence.new({ kp(0, 1), kp(0.5, 0), kp(1, 1) }),
+					Parent = fr,
+				})
+				streaks[i] = {
+					frame = fr,
+					x = rand(),
+					y = 0.05 + rand() * 0.9,
+					speed = (0.25 + rand() * 0.7) * dirn,
+					alpha = 0.25 + rand() * 0.4,
+				}
+			end
+
+			----------------------------------------------------------
+			-- Stage: glow, spinning rings and the logo
+			----------------------------------------------------------
+			local stage = create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.46),
+				Size = UDim2.fromScale(0.6, 0.6),
+				SizeConstraint = Enum.SizeConstraint.RelativeYY,
+				BackgroundTransparency = 1,
+				Parent = root,
+			})
+
+			local glow = {}
+			for i = 1, 8 do
+				local s = 0.28 + i * 0.09
+				local fr = create("Frame", {
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Position = UDim2.fromScale(0.5, 0.5),
+					Size = UDim2.fromScale(s, s),
+					BackgroundColor3 = accent,
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Parent = stage,
+				})
+				create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = fr })
+				glow[i] = { frame = fr, base = 0.915 + i * 0.0105 }
+			end
+
+			local rings = {}
+			local function ring(scale, thickness, speed)
+				local fr = create("Frame", {
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Position = UDim2.fromScale(0.5, 0.5),
+					Size = UDim2.fromScale(scale, scale),
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Parent = stage,
+				})
+				create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = fr })
+				local stroke = create("UIStroke", {
+					Thickness = thickness,
+					Color = accent,
+					Transparency = 1,
+					ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+					Parent = fr,
+				})
+				local grad = create("UIGradient", {
+					Transparency = NumberSequence.new({
+						kp(0, 0), kp(0.2, 0), kp(0.28, 1), kp(0.5, 1),
+						kp(0.58, 0), kp(0.75, 0), kp(0.83, 1), kp(1, 1),
+					}),
+					Parent = stroke,
+				})
+				table.insert(rings, { stroke = stroke, grad = grad, speed = speed })
+			end
+			ring(0.98, 2, 70)
+			ring(0.84, 1, -45)
+
+			-- Logo: the picture if one was given, otherwise the window name in big letters
+			local logoBox = create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.5),
+				Size = image and UDim2.fromScale(0.86, 0.86) or UDim2.fromScale(1.6, 0.34),
+				BackgroundTransparency = 1,
+				Parent = stage,
+			})
+			local logoScale = create("UIScale", { Scale = 1.12, Parent = logoBox })
+
+			local colorProp = image and "ImageColor3" or "TextColor3"
+			local function piece(color)
+				local obj
+				if image then
+					obj = create("ImageLabel", {
+						Size = UDim2.fromScale(1, 1),
+						BackgroundTransparency = 1,
+						Image = image,
+						ScaleType = Enum.ScaleType.Fit,
+						ImageColor3 = color,
+						ImageTransparency = 1,
+						Parent = logoBox,
+					})
+				else
+					obj = create("TextLabel", {
+						Size = UDim2.fromScale(1, 1),
+						BackgroundTransparency = 1,
+						Text = logoName,
+						Font = Fonts.Title,
+						TextScaled = true,
+						TextColor3 = color,
+						TextTransparency = 1,
+						Parent = logoBox,
+					})
+				end
+				return obj
+			end
+			local function setT(obj, a)
+				if image then
+					obj.ImageTransparency = a
+				else
+					obj.TextTransparency = a
+				end
+			end
+
+			local ghostR = piece(Color3.fromRGB(255, 45, 70))
+			local ghostC = piece(Color3.fromRGB(40, 230, 255))
+			local logo = piece(Color3.fromRGB(205, 205, 212))
+			local shinePiece = piece(white)
+			local shineGrad = create("UIGradient", {
+				Rotation = 20,
+				Offset = Vector2.new(-1, 0),
+				Transparency = NumberSequence.new({ kp(0, 1), kp(0.4, 1), kp(0.5, 0), kp(0.6, 1), kp(1, 1) }),
+				Parent = shinePiece,
+			})
+			setT(shinePiece, 0)
+
+			if opts.Subtitle then
+				local sub = create("TextLabel", {
+					AnchorPoint = Vector2.new(0.5, 0),
+					Position = UDim2.fromScale(0.5, 0.92),
+					Size = UDim2.fromScale(1, 0.06),
+					BackgroundTransparency = 1,
+					Text = string.upper(opts.Subtitle),
+					Font = Fonts.Title,
+					TextScaled = true,
+					TextColor3 = accentLight,
+					TextTransparency = 1,
+					Parent = stage,
+				})
+				task.delay(1.4, function()
+					tween(sub, { TextTransparency = 0.15 }, 0.6)
+				end)
+			end
+
+			----------------------------------------------------------
+			-- Scanline sweep
+			----------------------------------------------------------
+			local scan = create("Frame", {
+				Size = UDim2.new(1, 0, 0, 2),
+				Position = UDim2.fromScale(0, -0.05),
+				BackgroundColor3 = accentLight,
+				BorderSizePixel = 0,
+				Visible = false,
+				Parent = root,
+			})
+			create("UIGradient", {
+				Transparency = NumberSequence.new({ kp(0, 1), kp(0.15, 0), kp(0.85, 0), kp(1, 1) }),
+				Parent = scan,
+			})
+			local trail = create("Frame", {
+				AnchorPoint = Vector2.new(0, 1),
+				Size = UDim2.new(1, 0, 0, 120),
+				BackgroundColor3 = accent,
+				BorderSizePixel = 0,
+				Parent = scan,
+			})
+			create("UIGradient", {
+				Rotation = 90,
+				Transparency = NumberSequence.new({ kp(0, 1), kp(1, 0.8) }),
+				Parent = trail,
+			})
+
+			----------------------------------------------------------
+			-- Progress bar + status text
+			----------------------------------------------------------
+			local trackW = 0.32
+			local track = create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.865),
+				Size = UDim2.new(trackW, 0, 0, 3),
+				BackgroundColor3 = Color3.fromRGB(40, 40, 44),
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Parent = root,
+			})
+			create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = track })
+			local fill = create("Frame", {
+				Size = UDim2.fromScale(0, 1),
+				BackgroundColor3 = white,
+				BorderSizePixel = 0,
+				Parent = track,
+			})
+			create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = fill })
+			create("UIGradient", { Color = ColorSequence.new(accent, accentLight), Parent = fill })
+
+			local statusLabel = create("TextLabel", {
+				AnchorPoint = Vector2.new(0, 1),
+				Position = UDim2.fromScale(0.5 - trackW / 2, 0.85),
+				Size = UDim2.new(trackW * 0.7, 0, 0, 18),
+				BackgroundTransparency = 1,
+				Font = Fonts.Body,
+				TextSize = 13,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextColor3 = Color3.fromRGB(150, 150, 160),
+				TextTransparency = 1,
+				Text = "INITIALIZING",
+				Parent = root,
+			})
+			local percent = create("TextLabel", {
+				AnchorPoint = Vector2.new(1, 1),
+				Position = UDim2.fromScale(0.5 + trackW / 2, 0.85),
+				Size = UDim2.new(trackW * 0.3, 0, 0, 18),
+				BackgroundTransparency = 1,
+				Font = Fonts.Heading,
+				TextSize = 13,
+				TextXAlignment = Enum.TextXAlignment.Right,
+				TextColor3 = white,
+				TextTransparency = 1,
+				Text = "0%",
+				Parent = root,
+			})
+			local skipHint = create("TextLabel", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.95),
+				Size = UDim2.new(0.4, 0, 0, 14),
+				BackgroundTransparency = 1,
+				Font = Fonts.Body,
+				TextSize = 11,
+				TextColor3 = Color3.fromRGB(120, 120, 130),
+				TextTransparency = 1,
+				Text = "PRESS ANY KEY TO SKIP",
+				Parent = root,
+			})
+
+			local steps = {
+				{ 0, "INITIALIZING" },
+				{ 0.2, "LOADING MODULES" },
+				{ 0.45, "APPLYING SETTINGS" },
+				{ 0.7, "BUILDING INTERFACE" },
+				{ 0.95, "READY" },
+			}
+			prog.Changed:Connect(function(v)
+				fill.Size = UDim2.fromScale(v, 1)
+				percent.Text = string.format("%d%%", math.floor(v * 100 + 0.5))
+				local msg = steps[1][2]
+				for _, s in ipairs(steps) do
+					if v >= s[1] then msg = s[2] end
+				end
+				statusLabel.Text = msg
+			end)
+
+			-- Full-screen flash (last = on top)
+			local flash = create("Frame", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundColor3 = accent,
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Parent = root,
+			})
+
+			----------------------------------------------------------
+			-- Per-frame animation
+			----------------------------------------------------------
+			local t0 = os.clock()
+			loopConn = RunService.Heartbeat:Connect(function(dt)
+				local t = os.clock() - t0
+
+				local pa = partAmt.Value
+				for _, p in ipairs(particles) do
+					p.y -= p.speed * dt
+					if p.y < -0.03 then
+						p.y = 1.03
+						p.x = rand()
+					end
+					p.frame.Position = UDim2.fromScale(p.x + math.sin(t * p.drift + p.phase) * 0.012, p.y)
+					local tw = 0.5 + 0.5 * math.sin(t * p.twinkle + p.phase)
+					p.frame.BackgroundTransparency = 1 - p.alpha * (0.3 + 0.7 * tw) * pa
+				end
+				for _, s in ipairs(streaks) do
+					s.x += s.speed * dt
+					if s.speed > 0 and s.x > 1.3 then
+						s.x = -0.3
+						s.y = 0.05 + rand() * 0.9
+					elseif s.speed < 0 and s.x < -0.3 then
+						s.x = 1.3
+						s.y = 0.05 + rand() * 0.9
+					end
+					s.frame.Position = UDim2.fromScale(s.x, s.y)
+					s.frame.BackgroundTransparency = 1 - s.alpha * pa
+				end
+
+				local ga = glowAmt.Value
+				local pulse = 0.85 + 0.15 * math.sin(t * 2.2)
+				for _, g in ipairs(glow) do
+					g.frame.BackgroundTransparency = math.clamp(1 - (1 - g.base) * ga * pulse, 0, 1)
+				end
+				for _, r in ipairs(rings) do
+					r.grad.Rotation = (t * r.speed) % 360
+				end
+
+				-- Logo reveal with a glitch: RGB-split ghosts, shake and flicker that settle down
+				local rv, gl = logoAmt.Value, glitch.Value
+				local jitter = gl * 14
+				ghostR.Position = UDim2.fromOffset((rand() * 2 - 1) * jitter, (rand() * 2 - 1) * jitter * 0.4)
+				ghostC.Position = UDim2.fromOffset((rand() * 2 - 1) * jitter, (rand() * 2 - 1) * jitter * 0.4)
+				logoBox.Position = UDim2.new(0.5, (rand() * 2 - 1) * gl * 6, 0.5, (rand() * 2 - 1) * gl * 3)
+				local flicker = (rand() < gl * 0.55) and rand() * 0.9 or 0
+				setT(logo, math.clamp((1 - rv) + flicker * gl, 0, 1))
+				local ghostT = (rand() < 0.25) and 1 or (1 - 0.7 * gl * rv)
+				setT(ghostR, ghostT)
+				setT(ghostC, ghostT)
+			end)
+
+			----------------------------------------------------------
+			-- Timeline
+			----------------------------------------------------------
+			local skipped = false
+			skipConn = UserInputService.InputBegan:Connect(function(input)
+				if os.clock() - t0 < 0.8 then return end
+				local ut = input.UserInputType
+				if ut == Enum.UserInputType.MouseButton1 or ut == Enum.UserInputType.Touch or ut == Enum.UserInputType.Keyboard then
+					skipped = true
+				end
+			end)
+			local function pause(sec)
+				local s = os.clock()
+				while os.clock() - s < sec and not skipped do
+					task.wait()
+				end
+			end
+
+			-- Progress runs in its own thread, in uneven bursts
+			local span = math.max(duration - 1.9, 1.2)
+			local progDone = false
+			task.spawn(function()
+				pause(0.45)
+				local targets = { 0.17, 0.4, 0.58, 0.83, 1 }
+				local weights = { 0.12, 0.3, 0.16, 0.28, 0.14 }
+				for i, target in ipairs(targets) do
+					local dur = skipped and 0.12 or span * weights[i]
+					tnum(prog, target, dur, Enum.EasingStyle.Quad)
+					pause(dur + (i < #targets and rand() * 0.1 or 0))
+				end
+				tnum(prog, 1, 0.1)
+				progDone = true
+			end)
+
+			-- Intro: lines grow, embers and glow fade up, rings appear
+			tween(lineTop, { Size = UDim2.new(0.86, 0, 0, 1) }, 0.9, Enum.EasingStyle.Quint)
+			tween(lineBottom, { Size = UDim2.new(0.86, 0, 0, 1) }, 0.9, Enum.EasingStyle.Quint)
+			tnum(partAmt, 1, 1.4)
+			tnum(glowAmt, 1, 1.6)
+			for _, r in ipairs(rings) do
+				tween(r.stroke, { Transparency = 0.25 }, 1.0)
+			end
+			tween(track, { BackgroundTransparency = 0 }, 0.6)
+			tween(statusLabel, { TextTransparency = 0 }, 0.6)
+			tween(percent, { TextTransparency = 0 }, 0.6)
+			pause(0.4)
+
+			-- Logo glitches in and settles
+			glitch.Value = 1
+			tnum(logoAmt, 1, 0.9, Enum.EasingStyle.Linear)
+			tnum(glitch, 0, 1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+			tween(logoScale, { Scale = 1 }, 1.2, Enum.EasingStyle.Quint)
+			tween(skipHint, { TextTransparency = 0.5 }, 0.8)
+			pause(1.0)
+
+			-- Shine sweep over the logo + a scanline down the screen
+			scan.Visible = true
+			tween(scan, { Position = UDim2.fromScale(0, 1.05) }, 1.1, Enum.EasingStyle.Sine)
+			tween(shineGrad, { Offset = Vector2.new(1, 0) }, 1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
+			flash.BackgroundColor3 = accent
+			flash.BackgroundTransparency = 0.88
+			tween(flash, { BackgroundTransparency = 1 }, 0.5)
+
+			-- Wait for the progress bar (with a safety net so the window can never get stuck behind this)
+			local deadline = os.clock() + duration + 3
+			while not progDone and not skipped and os.clock() < deadline do
+				task.wait()
+			end
+
+			-- Ready: the logo ignites
+			tween(logo, { [colorProp] = white }, 0.3)
+			tnum(glowAmt, 2.2, 0.18, Enum.EasingStyle.Quad)
+			for _, r in ipairs(rings) do
+				tween(r.stroke, { Transparency = 0 }, 0.18)
+			end
+			pause(0.2)
+			tnum(glowAmt, 1, 0.7)
+			pause(0.3)
+
+			-- Outro: flash, logo pushes toward the camera, everything fades; the window fades in underneath
+			reveal()
+			flash.BackgroundColor3 = white
+			flash.BackgroundTransparency = 0.5
+			tween(flash, { BackgroundTransparency = 1 }, 0.55)
+			tween(logoScale, { Scale = 1.18 }, 0.8, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+			tween(lineTop, { Size = UDim2.new(0, 0, 0, 1) }, 0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+			tween(lineBottom, { Size = UDim2.new(0, 0, 0, 1) }, 0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+			tween(root, { GroupTransparency = 1 }, 0.75, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+			task.wait(0.8)
+		end)
+
+		cleanup()
+		reveal() -- also covers the failure path: the window always shows up
+		if not ok then
+			warn("[GuiLibrary] Splash screen failed: " .. tostring(err))
+		end
+	end)
+end
+
+----------------------------------------------------------------------
 -- Window
 ----------------------------------------------------------------------
 function Library:CreateWindow(settings)
@@ -399,6 +994,7 @@ function Library:CreateWindow(settings)
 	local tabCount = 0
 	local toggleKey = settings.ToggleKey or Enum.KeyCode.RightShift
 	local visible = false
+	local splashActive = false
 	local toggleBind
 
 	------------------------------------------------------------------
@@ -455,6 +1051,8 @@ function Library:CreateWindow(settings)
 	------------------------------------------------------------------
 	local gui = create("ScreenGui", {
 		Name = settings.Name or "Window",
+		DisplayOrder = 2147483000,
+		OnTopOfCoreBlur = true,
 		ResetOnSpawn = false,
 		IgnoreGuiInset = true,
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
@@ -503,8 +1101,12 @@ function Library:CreateWindow(settings)
 		})
 	end
 
-	-- Holder = the thing that moves/resizes. Glow, shine and the window all live inside it.
-	local fullSize = UDim2.fromOffset(560, 370)
+	-- Layout: a floating top bar plus the window body underneath it.
+	-- Each of the two gets its own glow and shine.
+	local BAR_H, GAP = 40, 8
+	local fullSize = UDim2.fromOffset(560, 380)
+
+	-- Holder = the thing that moves/resizes. Everything below lives inside it.
 	local holder = create("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
@@ -515,58 +1117,82 @@ function Library:CreateWindow(settings)
 	})
 	local popScale = create("UIScale", { Scale = 0.9, Parent = holder })
 
-	-- Soft glow behind the window (stacked rounded frames, no image assets needed)
-	local glowLayers = {}
-	if GlowEnabled then
+	local barHolder = create("Frame", {
+		Size = UDim2.new(1, 0, 0, BAR_H),
+		BackgroundTransparency = 1,
+		Parent = holder,
+	})
+	local bodyHolder = create("Frame", {
+		Position = UDim2.fromOffset(0, BAR_H + GAP),
+		Size = UDim2.new(1, 0, 1, -(BAR_H + GAP)),
+		BackgroundTransparency = 1,
+		Parent = holder,
+	})
+
+	-- Soft glow behind a piece of the window (stacked rounded frames, no image assets needed)
+	-- plus a "shine": a bright spot that travels around its edge.
+	local glowLayers, shines = {}, {}
+	local function makeGlow(parent, step, isBody, phase)
+		if not GlowEnabled then return end
 		for i = 1, 7 do
-			local pad = i * 6
+			local pad = i * step
 			local fr = create("Frame", {
 				Size = UDim2.new(1, pad * 2, 1, pad * 2),
 				Position = UDim2.fromOffset(-pad, -pad),
 				BackgroundColor3 = Theme.Accent,
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
-				Parent = holder,
+				Parent = parent,
 			})
 			corner(fr, 14 + pad)
-			table.insert(glowLayers, { frame = fr, base = 0.90 + i * 0.013 })
+			table.insert(glowLayers, { frame = fr, base = 0.90 + i * 0.013, body = isBody })
 		end
+
+		local shine = create("Frame", {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			Parent = parent,
+		})
+		corner(shine, 14)
+		local stroke = create("UIStroke", {
+			Thickness = 2,
+			Color = Color3.new(1, 1, 1),
+			Transparency = 1,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+			Parent = shine,
+		})
+		local gradient = create("UIGradient", {
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(0.3, 1),
+				NumberSequenceKeypoint.new(0.5, 0),
+				NumberSequenceKeypoint.new(0.7, 1),
+				NumberSequenceKeypoint.new(1, 1),
+			}),
+			Parent = stroke,
+		})
+		table.insert(shines, { stroke = stroke, gradient = gradient, body = isBody, phase = phase })
 	end
+	makeGlow(barHolder, 4, false, 0)
+	makeGlow(bodyHolder, 6, true, 140)
 
-	-- Shine: a bright spot that travels around the window's edge
-	local shine = create("Frame", {
+	-- The two window pieces. CanvasGroups let each one fade in a single go.
+	local topbar = create("CanvasGroup", {
 		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		Visible = GlowEnabled,
-		Parent = holder,
+		BackgroundTransparency = Alpha,
+		BorderSizePixel = 0,
+		GroupTransparency = 1,
+		Bind = { BackgroundColor3 = "Topbar" },
+		Parent = barHolder,
 	})
-	corner(shine, 14)
-	local shineStroke = create("UIStroke", {
-		Thickness = 2,
-		Color = Color3.new(1, 1, 1),
-		Transparency = 1,
-		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-		Parent = shine,
-	})
-	local shineGradient = create("UIGradient", {
-		Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 1),
-			NumberSequenceKeypoint.new(0.3, 1),
-			NumberSequenceKeypoint.new(0.5, 0),
-			NumberSequenceKeypoint.new(0.7, 1),
-			NumberSequenceKeypoint.new(1, 1),
-		}),
-		Parent = shineStroke,
-	})
-
-	-- The window itself. A CanvasGroup lets the whole thing fade in one go.
+	corner(topbar, 14)
 	local main = create("CanvasGroup", {
 		Size = UDim2.fromScale(1, 1),
 		BackgroundTransparency = Alpha,
 		BorderSizePixel = 0,
 		GroupTransparency = 1,
 		Bind = { BackgroundColor3 = "Background" },
-		Parent = holder,
+		Parent = bodyHolder,
 	})
 	corner(main, 14)
 
@@ -575,7 +1201,9 @@ function Library:CreateWindow(settings)
 		for _, l in ipairs(glowLayers) do
 			l.frame.BackgroundColor3 = Theme.Accent
 		end
-		shineGradient.Color = ColorSequence.new(Theme.Accent, Theme.Accent:Lerp(Color3.new(1, 1, 1), 0.65))
+		for _, s in ipairs(shines) do
+			s.gradient.Color = ColorSequence.new(Theme.Accent, Theme.Accent:Lerp(Color3.new(1, 1, 1), 0.65))
+		end
 		for _, s in ipairs(sprinkles) do
 			s.frame.BackgroundColor3 = s.accent and Theme.Accent or Color3.new(1, 1, 1)
 		end
@@ -602,7 +1230,7 @@ function Library:CreateWindow(settings)
 	local infoLabel = create("TextLabel", {
 		Size = UDim2.fromScale(1, 1),
 		BackgroundTransparency = 1,
-		Font = Enum.Font.RobotoMono,
+		Font = Fonts.Mono,
 		TextSize = 13,
 		RichText = true,
 		TextWrapped = false,
@@ -666,16 +1294,23 @@ function Library:CreateWindow(settings)
 	----------------------------------------------------------------
 	local fade = Instance.new("NumberValue")
 	fade.Value = 0
+	local bodyFade = Instance.new("NumberValue") -- 1 = body shown, 0 = body hidden (minimized)
+	bodyFade.Value = 1
 	local fadeTween
 
-	local function apply(v)
-		main.GroupTransparency = 1 - v
+	local function apply()
+		local v, bf = fade.Value, bodyFade.Value
+		topbar.GroupTransparency = 1 - v
+		main.GroupTransparency = 1 - v * bf
 		popScale.Scale = 0.9 + 0.1 * v
 		backdrop.BackgroundTransparency = 1 - (1 - BackdropAlpha) * v
-		shineStroke.Transparency = 1 - 0.85 * v
+		for _, s in ipairs(shines) do
+			s.stroke.Transparency = 1 - 0.85 * v * (s.body and bf or 1)
+		end
 	end
 	fade.Changed:Connect(apply)
-	apply(0)
+	bodyFade.Changed:Connect(apply)
+	apply()
 
 	local function fadeTo(target, time, onDone)
 		if fadeTween then fadeTween:Cancel() end
@@ -703,13 +1338,16 @@ function Library:CreateWindow(settings)
 	local frameConn = RunService.Heartbeat:Connect(function(dt)
 		local f = fade.Value
 		if f <= 0 then return end
+		local bf = bodyFade.Value
 		local t = os.clock() - startTime
-
-		shineGradient.Rotation = (t * 80) % 360
 
 		local pulse = 0.8 + 0.2 * math.sin(t * 1.6)
 		for _, l in ipairs(glowLayers) do
-			l.frame.BackgroundTransparency = 1 - (1 - l.base) * f * pulse
+			local k = f * pulse * (l.body and bf or 1)
+			l.frame.BackgroundTransparency = 1 - (1 - l.base) * k
+		end
+		for _, s in ipairs(shines) do
+			s.gradient.Rotation = (t * 80 + s.phase) % 360
 		end
 
 		for _, s in ipairs(sprinkles) do
@@ -737,29 +1375,12 @@ function Library:CreateWindow(settings)
 		frameConn:Disconnect()
 		infoConn:Disconnect()
 		fade:Destroy()
+		bodyFade:Destroy()
 	end)
 
 	----------------------------------------------------------------
-	-- Topbar
+	-- Top bar
 	----------------------------------------------------------------
-	local topbar = create("Frame", {
-		Size = UDim2.new(1, 0, 0, 36),
-		BackgroundTransparency = Alpha,
-		BorderSizePixel = 0,
-		Bind = { BackgroundColor3 = "Topbar" },
-		Parent = main,
-	})
-	corner(topbar, 14)
-	-- Square off the topbar's bottom corners (hidden while minimized)
-	local filler = create("Frame", {
-		Size = UDim2.new(1, 0, 0, 14),
-		Position = UDim2.new(0, 0, 1, -14),
-		BackgroundTransparency = Alpha,
-		BorderSizePixel = 0,
-		Bind = { BackgroundColor3 = "Topbar" },
-		Parent = topbar,
-	})
-
 	local dot = create("Frame", {
 		Size = UDim2.fromOffset(7, 7),
 		Position = UDim2.new(0, 16, 0.5, -3),
@@ -769,18 +1390,26 @@ function Library:CreateWindow(settings)
 	})
 	create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = dot })
 
-	local title = label(topbar, settings.Name or "Window", 15)
-	title.Size = UDim2.new(1, -110, 1, 0)
-	title.Position = UDim2.fromOffset(32, 0)
-	title.Font = Enum.Font.GothamBold
+	local title = label(topbar, string.upper(settings.Name or "Window"), 18)
+	title.Size = UDim2.new(1, -130, 1, 0)
+	title.Position = UDim2.fromOffset(34, 0)
+	title.Font = Fonts.Title
+	-- faint accent outline on the title text gives it a soft glow
+	create("UIStroke", {
+		Thickness = 1,
+		Transparency = 0.7,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual,
+		Bind = { Color = "Accent" },
+		Parent = title,
+	})
 
 	local function topButton(text, offset)
 		local b = create("TextButton", {
 			Size = UDim2.fromOffset(28, 28),
-			Position = UDim2.new(1, offset, 0, 4),
+			Position = UDim2.new(1, offset, 0, 6),
 			BackgroundTransparency = 1,
 			Text = text,
-			Font = Enum.Font.GothamBold,
+			Font = Fonts.Heading,
 			TextSize = 16,
 			Bind = { TextColor3 = "SubText" },
 			Parent = topbar,
@@ -796,7 +1425,7 @@ function Library:CreateWindow(settings)
 	local settingsEntry, lastNormalEntry
 	local settingsBtn = create("TextButton", {
 		Size = UDim2.fromOffset(28, 28),
-		Position = UDim2.new(1, -96, 0, 4),
+		Position = UDim2.new(1, -96, 0, 6),
 		BackgroundTransparency = 1,
 		Text = "",
 		Parent = topbar,
@@ -865,10 +1494,28 @@ function Library:CreateWindow(settings)
 	end)
 	onTheme(settingsBtn, refreshGear)
 
-	-- Tab list + page container
+	-- Soft highlight along the top of the bar, then its outline
+	local barSheen = create("Frame", {
+		Size = UDim2.new(1, 0, 0.7, 0),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+		Parent = topbar,
+	})
+	create("UIGradient", {
+		Rotation = 90,
+		Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.93),
+			NumberSequenceKeypoint.new(1, 1),
+		}),
+		Parent = barSheen,
+	})
+	hairline(topbar, 14, 0.3)
+
+	----------------------------------------------------------------
+	-- Window body: tab list + pages
+	----------------------------------------------------------------
 	local content = create("Frame", {
-		Size = UDim2.new(1, 0, 1, -36),
-		Position = UDim2.fromOffset(0, 36),
+		Size = UDim2.fromScale(1, 1),
 		BackgroundTransparency = 1,
 		Parent = main,
 	})
@@ -897,25 +1544,17 @@ function Library:CreateWindow(settings)
 		Parent = content,
 	})
 
-	-- Hairline dividers: under the topbar and between the sidebar and the pages
+	-- Hairline divider between the sidebar and the pages
 	create("Frame", {
-		Size = UDim2.new(1, 0, 0, 1),
-		Position = UDim2.fromOffset(0, 36),
-		BackgroundTransparency = 0.4,
-		BorderSizePixel = 0,
-		Bind = { BackgroundColor3 = "Stroke" },
-		Parent = main,
-	})
-	create("Frame", {
-		Size = UDim2.new(0, 1, 1, -52),
-		Position = UDim2.fromOffset(130, 44),
+		Size = UDim2.new(0, 1, 1, -20),
+		Position = UDim2.fromOffset(130, 10),
 		BackgroundTransparency = 0.5,
 		BorderSizePixel = 0,
 		Bind = { BackgroundColor3 = "Stroke" },
 		Parent = main,
 	})
 
-	-- Soft highlight across the top of the window for a bit of depth
+	-- Soft highlight across the top of the body for a bit of depth
 	local sheen = create("Frame", {
 		Size = UDim2.new(1, 0, 0, 170),
 		BackgroundColor3 = Color3.new(1, 1, 1),
@@ -931,10 +1570,10 @@ function Library:CreateWindow(settings)
 		Parent = sheen,
 	})
 
-	-- Window outline (last, so it sits on top of everything)
+	-- Body outline (last, so it sits on top of everything)
 	hairline(main, 14, 0.3)
 
-	-- Dragging
+	-- Dragging (by the top bar)
 	local dragging, dragStart, startPos
 	topbar.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -953,25 +1592,38 @@ function Library:CreateWindow(settings)
 		end
 	end)
 
-	-- Minimize (keeps the top edge in place) / close (fades out first)
+	-- Minimize: the body fades away and only the floating top bar stays (top edge fixed)
 	local minimized = false
 	local resizing = false
+	local function setHolderHeight(h, time)
+		local cur = holder.Size.Y.Offset
+		return tween(holder, {
+			Size = UDim2.fromOffset(fullSize.X.Offset, h),
+			Position = holder.Position + UDim2.fromOffset(0, (h - cur) / 2),
+		}, time, Enum.EasingStyle.Quint)
+	end
 	minBtn.MouseButton1Click:Connect(function()
 		if resizing then return end
 		resizing = true
 		minimized = not minimized
-		content.Visible = not minimized
-		filler.Visible = not minimized
-		sheen.Visible = not minimized
-
-		local curH = holder.Size.Y.Offset
-		local newH = minimized and 36 or fullSize.Y.Offset
-		local t = tween(holder, {
-			Size = UDim2.fromOffset(fullSize.X.Offset, newH),
-			Position = holder.Position + UDim2.fromOffset(0, (newH - curH) / 2),
-		}, 0.3, Enum.EasingStyle.Quint)
-		t.Completed:Connect(function() resizing = false end)
+		if minimized then
+			local t = tween(bodyFade, { Value = 0 }, 0.2)
+			t.Completed:Connect(function()
+				bodyHolder.Visible = false
+				local t2 = setHolderHeight(BAR_H, 0.3)
+				t2.Completed:Connect(function() resizing = false end)
+			end)
+		else
+			bodyHolder.Visible = true
+			local t = setHolderHeight(fullSize.Y.Offset, 0.3)
+			t.Completed:Connect(function()
+				local t2 = tween(bodyFade, { Value = 1 }, 0.25)
+				t2.Completed:Connect(function() resizing = false end)
+			end)
+		end
 	end)
+
+	-- Close (fades out first)
 	closeBtn.MouseButton1Click:Connect(function()
 		visible = false
 		infoOn = false
@@ -1012,7 +1664,7 @@ function Library:CreateWindow(settings)
 	end
 
 	local keyConn = UserInputService.InputBegan:Connect(function(input, processed)
-		if processed or listeningForKey then return end
+		if processed or listeningForKey or splashActive then return end
 		if input.KeyCode == toggleKey then
 			Window:Toggle()
 		end
@@ -1037,7 +1689,7 @@ function Library:CreateWindow(settings)
 			BorderSizePixel = 0,
 			Text = name,
 			TextXAlignment = Enum.TextXAlignment.Left,
-			Font = Enum.Font.GothamMedium,
+			Font = Fonts.Body,
 			TextSize = 13,
 			LayoutOrder = _internal and 1000 or tabCount, -- Settings always last
 			Bind = { BackgroundColor3 = "Element" },
@@ -1143,7 +1795,7 @@ function Library:CreateWindow(settings)
 				Size = UDim2.fromScale(1, 1),
 				BackgroundTransparency = 1,
 				Text = o.Name or "Button",
-				Font = Enum.Font.GothamMedium,
+				Font = Fonts.Body,
 				TextSize = 14,
 				Bind = { TextColor3 = "Text" },
 				Parent = f,
@@ -1319,7 +1971,7 @@ function Library:CreateWindow(settings)
 			local vl = label(f, "", 14, "Accent", Enum.TextXAlignment.Right)
 			vl.Size = UDim2.new(0.4, -12, 0, 24)
 			vl.Position = UDim2.new(0.6, 0, 0, 4)
-			vl.Font = Enum.Font.GothamBold
+			vl.Font = Fonts.Heading
 
 			local bar = create("Frame", {
 				Size = UDim2.new(1, -24, 0, 8),
@@ -1517,7 +2169,7 @@ function Library:CreateWindow(settings)
 				BorderSizePixel = 0,
 				Text = fromSave and flags[flag] or "",
 				PlaceholderText = o.PlaceholderText or "",
-				Font = Enum.Font.Gotham,
+				Font = Fonts.Light,
 				TextSize = 13,
 				ClearTextOnFocus = false,
 				Bind = { BackgroundColor3 = "Background", TextColor3 = "Text", PlaceholderColor3 = "SubText" },
@@ -1611,7 +2263,7 @@ function Library:CreateWindow(settings)
 					Size = UDim2.new(1, 0, 0, 26),
 					BorderSizePixel = 0,
 					Text = tostring(opt),
-					Font = Enum.Font.Gotham,
+					Font = Fonts.Light,
 					TextSize = 13,
 					Bind = { BackgroundColor3 = "Background", TextColor3 = "Text" },
 					Parent = list,
@@ -1655,7 +2307,7 @@ function Library:CreateWindow(settings)
 				Position = UDim2.new(1, -108, 0.5, -12),
 				BorderSizePixel = 0,
 				Text = key.Name,
-				Font = Enum.Font.GothamMedium,
+				Font = Fonts.Body,
 				TextSize = 12,
 				Bind = { BackgroundColor3 = "Background", TextColor3 = "Text" },
 				Parent = f,
@@ -1743,8 +2395,17 @@ function Library:CreateWindow(settings)
 	settingsEntry = SettingsTab._entry
 	refreshGear()
 
-	-- Fade the window in
-	Window:SetVisible(true)
+	-- Startup screen, then fade the window in
+	local splashOpts = settings.Splash
+	if splashOpts == false then
+		Window:SetVisible(true)
+	else
+		splashActive = true
+		playSplash(type(splashOpts) == "table" and splashOpts or {}, settings.Name, function()
+			splashActive = false
+			Window:SetVisible(true)
+		end)
+	end
 
 	return Window
 end
