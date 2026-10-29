@@ -3,23 +3,47 @@
 	Place as a LocalScript in StarterPlayer > StarterPlayerScripts
 	(or as a ModuleScript and require it)
 
-	API:
-		Library:CreateWindow({Name = "...", ToggleKey = Enum.KeyCode.RightShift, Theme = "Dark"})
+	WINDOW
+		Library:CreateWindow({
+			Name = "My Hub",
+			ToggleKey = Enum.KeyCode.RightShift,
+			Theme = "Dark",                -- Dark | Light | Ocean | Rose | Forest | Monochrome
+			InfoBar = true,                -- ping / fps / time bar, top right
+			ConfigurationSaving = {        -- autosave (on by default)
+				Enabled = true,
+				FolderName = "MyHub",
+				FileName = "Settings",
+			},
+		})
 		Window:CreateTab("Name")
-		Tab:CreateButton / CreateToggle / CreateSlider / CreateInput / CreateDropdown / CreateKeybind / CreateLabel
-		Window:Toggle() / Window:SetVisible(bool) / Window:SetToggleKey(Enum.KeyCode)
-		Library:SetTheme("Dark" | "Light" | "Ocean" | "Rose" | "Forest")
-		Library:Notify({Title, Content, Duration})
+		Window:Toggle() / :SetVisible(bool) / :SetToggleKey(KeyCode) / :SetInfoBar(bool)
 
-	Every window gets a permanent "Settings" tab (theme + toggle key) that always
-	sits at the bottom of the tab list. It is available as Window.SettingsTab if
-	you want to add your own items to it.
+	ELEMENTS (every one accepts an optional Flag = "SaveName")
+		Tab:CreateButton({Name, Callback})
+		Tab:CreateToggle({Name, CurrentValue, Callback(value), Loop = function() end, Interval = 0.1})
+		Tab:CreateSlider({Name, Range = {min, max}, Increment, Suffix, CurrentValue, Callback(value)})
+		Tab:CreateInput({Name, PlaceholderText, RemoveTextAfterFocusLost, Callback(text)})
+		Tab:CreateDropdown({Name, Options, CurrentOption, Callback(option)})
+		Tab:CreateKeybind({Name, CurrentKeybind, Callback(key), Changed(key)})
+		Tab:CreateLabel("text")
+
+	Toggle Loop: while the toggle is ON, Loop runs over and over (every Interval seconds,
+	default 0.1) until it is switched OFF. Callback still fires once per change.
+
+	AUTOSAVE: every element's value is saved to a JSON file whenever it changes and is
+	restored (callbacks included) the next time the script runs. Without a Flag, the save
+	key is "<Tab name>/<Element name>". Saving needs file access (writefile/readfile);
+	where that doesn't exist, the Settings tab says so and everything else keeps working.
+
+	Library:SetTheme(name) / Library:Notify({Title, Content, Duration})
 ]]
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local Stats = game:GetService("Stats")
 
 local Library = {}
 
@@ -43,6 +67,7 @@ local Themes = {
 		Accent = Color3.fromRGB(90, 120, 255),
 		Text = Color3.fromRGB(240, 240, 245),
 		SubText = Color3.fromRGB(160, 160, 170),
+		Stroke = Color3.fromRGB(66, 66, 78),
 	},
 	Light = {
 		Background = Color3.fromRGB(240, 240, 245),
@@ -52,6 +77,7 @@ local Themes = {
 		Accent = Color3.fromRGB(70, 100, 240),
 		Text = Color3.fromRGB(30, 30, 38),
 		SubText = Color3.fromRGB(105, 105, 120),
+		Stroke = Color3.fromRGB(208, 208, 218),
 	},
 	Ocean = {
 		Background = Color3.fromRGB(12, 25, 38),
@@ -61,6 +87,7 @@ local Themes = {
 		Accent = Color3.fromRGB(0, 170, 220),
 		Text = Color3.fromRGB(230, 244, 252),
 		SubText = Color3.fromRGB(140, 170, 190),
+		Stroke = Color3.fromRGB(44, 82, 118),
 	},
 	Rose = {
 		Background = Color3.fromRGB(32, 20, 26),
@@ -70,6 +97,7 @@ local Themes = {
 		Accent = Color3.fromRGB(235, 90, 140),
 		Text = Color3.fromRGB(250, 235, 240),
 		SubText = Color3.fromRGB(190, 150, 165),
+		Stroke = Color3.fromRGB(100, 62, 80),
 	},
 	Forest = {
 		Background = Color3.fromRGB(18, 28, 22),
@@ -79,9 +107,25 @@ local Themes = {
 		Accent = Color3.fromRGB(70, 200, 120),
 		Text = Color3.fromRGB(232, 248, 238),
 		SubText = Color3.fromRGB(150, 180, 162),
+		Stroke = Color3.fromRGB(60, 94, 74),
+	},
+	Monochrome = {
+		Background = Color3.fromRGB(12, 12, 12),
+		Topbar = Color3.fromRGB(20, 20, 20),
+		Element = Color3.fromRGB(27, 27, 27),
+		ElementHover = Color3.fromRGB(42, 42, 42),
+		Accent = Color3.fromRGB(240, 240, 240),
+		Text = Color3.fromRGB(245, 245, 245),
+		SubText = Color3.fromRGB(135, 135, 135),
+		Stroke = Color3.fromRGB(62, 62, 62),
+		Knob = Color3.fromRGB(12, 12, 12), -- dark knob on the white "on" track
 	},
 }
-local ThemeOrder = { "Dark", "Light", "Ocean", "Rose", "Forest" }
+local ThemeOrder = { "Dark", "Light", "Ocean", "Rose", "Forest", "Monochrome" }
+
+for _, t in pairs(Themes) do
+	t.Knob = t.Knob or Color3.new(1, 1, 1)
+end
 
 local Theme = {}
 for k, v in pairs(Themes.Dark) do
@@ -154,6 +198,27 @@ local function corner(parent, radius)
 	return create("UICorner", { CornerRadius = UDim.new(0, radius or 10), Parent = parent })
 end
 
+-- 1px inner border. Drawn as an inset frame whose stroke lands on the outermost pixel row,
+-- so it also works inside CanvasGroups (which would clip a stroke drawn outside).
+-- Never parent this to something that has a layout object.
+local function hairline(parent, radius, transparency)
+	local f = create("Frame", {
+		Size = UDim2.new(1, -2, 1, -2),
+		Position = UDim2.fromOffset(1, 1),
+		BackgroundTransparency = 1,
+		Parent = parent,
+	})
+	corner(f, math.max(radius - 1, 0))
+	create("UIStroke", {
+		Thickness = 1,
+		Transparency = transparency or 0.45,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		Bind = { Color = "Stroke" },
+		Parent = f,
+	})
+	return f
+end
+
 local function tween(inst, props, time, style, dir)
 	local t = TweenService:Create(
 		inst,
@@ -184,6 +249,7 @@ local function newElement(page, height)
 		Parent = page,
 	})
 	corner(frame, 10)
+	hairline(frame, 10)
 	return frame
 end
 
@@ -226,6 +292,19 @@ local function ripple(container, rel)
 	task.delay(0.6, function()
 		circle:Destroy()
 	end)
+end
+
+local function getPing()
+	local ok, v = pcall(function()
+		return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+	end)
+	if ok and type(v) == "number" then
+		return v
+	end
+	local ok2, p = pcall(function()
+		return Players.LocalPlayer:GetNetworkPing() * 2000
+	end)
+	return ok2 and p or 0
 end
 
 -- True while any keybind button is waiting for a key, so other key handlers stay quiet.
@@ -273,6 +352,7 @@ function Library:Notify(settings)
 		Parent = wrapper,
 	})
 	corner(card, 12)
+	hairline(card, 12)
 
 	local stripe = create("Frame", {
 		Size = UDim2.new(0, 3, 1, -18),
@@ -321,6 +401,58 @@ function Library:CreateWindow(settings)
 	local visible = false
 	local toggleBind
 
+	------------------------------------------------------------------
+	-- Autosave
+	------------------------------------------------------------------
+	local cfg = settings.ConfigurationSaving or {}
+	local saveEnabled = cfg.Enabled ~= false
+	local hasFiles = type(writefile) == "function" and type(readfile) == "function" and type(isfile) == "function"
+	local canSave = saveEnabled and hasFiles
+	local folder = cfg.FolderName or ((settings.Name or "GuiLibrary"):gsub("[^%w_%- ]", ""))
+	if folder == "" then folder = "GuiLibrary" end
+	local filePath = folder .. "/" .. (cfg.FileName or "Settings") .. ".json"
+
+	local flags = {}
+	if canSave then
+		pcall(function()
+			if isfile(filePath) then
+				local data = HttpService:JSONDecode(readfile(filePath))
+				if type(data) == "table" then
+					flags = data
+				end
+			end
+		end)
+	end
+	Window.Flags = flags
+
+	local savePending = false
+	local function flush()
+		if not canSave then return end
+		pcall(function()
+			if type(makefolder) == "function" and type(isfolder) == "function" and not isfolder(folder) then
+				makefolder(folder)
+			end
+			writefile(filePath, HttpService:JSONEncode(flags))
+		end)
+	end
+	local function changed(flag, value)
+		if flags[flag] == value then return end
+		flags[flag] = value
+		if canSave and not savePending then
+			savePending = true
+			task.delay(0.4, function()
+				savePending = false
+				flush()
+			end)
+		end
+	end
+	function Window:SaveNow()
+		flush()
+	end
+
+	------------------------------------------------------------------
+	-- GUI root
+	------------------------------------------------------------------
 	local gui = create("ScreenGui", {
 		Name = settings.Name or "Window",
 		ResetOnSpawn = false,
@@ -372,7 +504,7 @@ function Library:CreateWindow(settings)
 	end
 
 	-- Holder = the thing that moves/resizes. Glow, shine and the window all live inside it.
-	local fullSize = UDim2.fromOffset(520, 340)
+	local fullSize = UDim2.fromOffset(560, 370)
 	local holder = create("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
@@ -452,6 +584,84 @@ function Library:CreateWindow(settings)
 	recolor()
 
 	----------------------------------------------------------------
+	-- Info bar (fps / ping / time), top right
+	----------------------------------------------------------------
+	local infoOn = false
+	local infoBar = create("CanvasGroup", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -14, 0, 12),
+		Size = UDim2.fromOffset(120, 28),
+		GroupTransparency = 1,
+		BackgroundTransparency = 0.12,
+		BorderSizePixel = 0,
+		Visible = false,
+		Bind = { BackgroundColor3 = "Background" },
+		Parent = gui,
+	})
+	corner(infoBar, 14)
+	local infoLabel = create("TextLabel", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.RobotoMono,
+		TextSize = 13,
+		RichText = true,
+		TextWrapped = false,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Text = "",
+		Bind = { TextColor3 = "Text" },
+		Parent = infoBar,
+	})
+	hairline(infoBar, 14)
+
+	local lastFps = 60
+	local barWidth = 0
+	local function refreshInfo(fps)
+		lastFps = fps or lastFps
+		local sub, txt = Theme.SubText:ToHex(), Theme.Text:ToHex()
+		infoLabel.Text = string.format(
+			'<font color="#%s">FPS</font> <font color="#%s">%3d</font>   <font color="#%s">PING</font> <font color="#%s">%3d</font><font color="#%s">ms</font>   <font color="#%s">%s</font>',
+			sub, txt, math.clamp(math.floor(lastFps + 0.5), 0, 999),
+			sub, txt, math.clamp(math.floor(getPing() + 0.5), 0, 999),
+			sub, txt, os.date("%H:%M")
+		)
+		-- Only ever grows, so the bar doesn't jitter as numbers change
+		local w = math.ceil(infoLabel.TextBounds.X) + 30
+		if w > barWidth then
+			barWidth = w
+			infoBar.Size = UDim2.fromOffset(w, 28)
+		end
+	end
+	onTheme(infoBar, function() refreshInfo() end)
+
+	local infoFrames, infoAcc = 0, 0
+	local infoConn = RunService.Heartbeat:Connect(function(dt)
+		if not infoOn then return end
+		infoFrames += 1
+		infoAcc += dt
+		if infoAcc >= 0.5 then
+			local fps = infoFrames / infoAcc
+			infoFrames, infoAcc = 0, 0
+			refreshInfo(fps)
+		end
+	end)
+
+	function Window:SetInfoBar(v)
+		v = v == true
+		if v == infoOn then return end
+		infoOn = v
+		if v then
+			infoBar.Visible = true
+			refreshInfo()
+			tween(infoBar, { GroupTransparency = 0 }, 0.35)
+		else
+			local t = tween(infoBar, { GroupTransparency = 1 }, 0.25)
+			t.Completed:Connect(function()
+				if not infoOn then infoBar.Visible = false end
+			end)
+		end
+	end
+
+	----------------------------------------------------------------
 	-- Fade in / out (one 0..1 value drives everything)
 	----------------------------------------------------------------
 	local fade = Instance.new("NumberValue")
@@ -515,6 +725,7 @@ function Library:CreateWindow(settings)
 	end)
 	gui.Destroying:Connect(function()
 		frameConn:Disconnect()
+		infoConn:Disconnect()
 		fade:Destroy()
 	end)
 
@@ -539,9 +750,18 @@ function Library:CreateWindow(settings)
 		Parent = topbar,
 	})
 
+	local dot = create("Frame", {
+		Size = UDim2.fromOffset(7, 7),
+		Position = UDim2.new(0, 16, 0.5, -3),
+		BorderSizePixel = 0,
+		Bind = { BackgroundColor3 = "Accent" },
+		Parent = topbar,
+	})
+	create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = dot })
+
 	local title = label(topbar, settings.Name or "Window", 15)
-	title.Size = UDim2.new(1, -80, 1, 0)
-	title.Position = UDim2.fromOffset(16, 0)
+	title.Size = UDim2.new(1, -110, 1, 0)
+	title.Position = UDim2.fromOffset(32, 0)
 	title.Font = Enum.Font.GothamBold
 
 	local function topButton(text, offset)
@@ -584,7 +804,7 @@ function Library:CreateWindow(settings)
 		Parent = tabBar,
 	})
 	create("UIPadding", {
-		PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 4),
+		PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 6),
 		Parent = tabBar,
 	})
 	local pages = create("Frame", {
@@ -593,6 +813,43 @@ function Library:CreateWindow(settings)
 		BackgroundTransparency = 1,
 		Parent = content,
 	})
+
+	-- Hairline dividers: under the topbar and between the sidebar and the pages
+	create("Frame", {
+		Size = UDim2.new(1, 0, 0, 1),
+		Position = UDim2.fromOffset(0, 36),
+		BackgroundTransparency = 0.4,
+		BorderSizePixel = 0,
+		Bind = { BackgroundColor3 = "Stroke" },
+		Parent = main,
+	})
+	create("Frame", {
+		Size = UDim2.new(0, 1, 1, -52),
+		Position = UDim2.fromOffset(130, 44),
+		BackgroundTransparency = 0.5,
+		BorderSizePixel = 0,
+		Bind = { BackgroundColor3 = "Stroke" },
+		Parent = main,
+	})
+
+	-- Soft highlight across the top of the window for a bit of depth
+	local sheen = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 170),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+		Parent = main,
+	})
+	create("UIGradient", {
+		Rotation = 90,
+		Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.945),
+			NumberSequenceKeypoint.new(1, 1),
+		}),
+		Parent = sheen,
+	})
+
+	-- Window outline (last, so it sits on top of everything)
+	hairline(main, 14, 0.3)
 
 	-- Dragging
 	local dragging, dragStart, startPos
@@ -622,6 +879,7 @@ function Library:CreateWindow(settings)
 		minimized = not minimized
 		content.Visible = not minimized
 		filler.Visible = not minimized
+		sheen.Visible = not minimized
 
 		local curH = holder.Size.Y.Offset
 		local newH = minimized and 36 or fullSize.Y.Offset
@@ -633,6 +891,8 @@ function Library:CreateWindow(settings)
 	end)
 	closeBtn.MouseButton1Click:Connect(function()
 		visible = false
+		infoOn = false
+		tween(infoBar, { GroupTransparency = 1 }, 0.25)
 		fadeTo(0, 0.25, function()
 			gui:Destroy()
 		end)
@@ -682,12 +942,18 @@ function Library:CreateWindow(settings)
 	function Window:CreateTab(name, _internal)
 		local Tab = {}
 
+		-- Save key for an element: explicit Flag, or "<Tab>/<Element name>"
+		local function flagOf(o, fallback)
+			return o.Flag or (name .. "/" .. (o.Name or fallback))
+		end
+
 		tabCount += 1
 		local tabButton = create("TextButton", {
 			Size = UDim2.new(1, 0, 0, 32),
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			Text = name,
+			TextXAlignment = Enum.TextXAlignment.Left,
 			Font = Enum.Font.GothamMedium,
 			TextSize = 13,
 			LayoutOrder = _internal and 1000 or tabCount, -- Settings always last
@@ -695,6 +961,16 @@ function Library:CreateWindow(settings)
 			Parent = tabBar,
 		})
 		corner(tabButton, 10)
+		create("UIPadding", { PaddingLeft = UDim.new(0, 16), Parent = tabButton })
+		local indicator = create("Frame", {
+			Size = UDim2.fromOffset(3, 14),
+			Position = UDim2.new(0, -11, 0.5, -7),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Bind = { BackgroundColor3 = "Accent" },
+			Parent = tabButton,
+		})
+		corner(indicator, 2)
 
 		local page = create("ScrollingFrame", {
 			Size = UDim2.new(1, 0, 1, 0),
@@ -709,18 +985,21 @@ function Library:CreateWindow(settings)
 		})
 		create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = page })
 		create("UIPadding", {
-			PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 6),
-			PaddingRight = UDim.new(0, 10), PaddingBottom = UDim.new(0, 8),
+			PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 8),
+			PaddingRight = UDim.new(0, 12), PaddingBottom = UDim.new(0, 10),
 			Parent = page,
 		})
 
-		local entry = { button = tabButton, page = page }
+		local entry = { button = tabButton, page = page, indicator = indicator }
 		table.insert(tabs, entry)
 
 		local function styleTab(e)
 			local selected = e == selectedTab
-			e.button.BackgroundTransparency = selected and Alpha or 1
-			e.button.TextColor3 = selected and Theme.Text or Theme.SubText
+			tween(e.button, {
+				BackgroundTransparency = selected and Alpha or 1,
+				TextColor3 = selected and Theme.Text or Theme.SubText,
+			}, 0.18)
+			tween(e.indicator, { BackgroundTransparency = selected and 0 or 1 }, 0.18)
 		end
 		local function select()
 			selectedTab = entry
@@ -731,6 +1010,12 @@ function Library:CreateWindow(settings)
 		end
 		onTheme(tabButton, function() styleTab(entry) end)
 		tabButton.MouseButton1Click:Connect(select)
+		tabButton.MouseEnter:Connect(function()
+			if selectedTab ~= entry then tween(tabButton, { BackgroundTransparency = 0.6 }, 0.12) end
+		end)
+		tabButton.MouseLeave:Connect(function()
+			if selectedTab ~= entry then tween(tabButton, { BackgroundTransparency = 1 }, 0.12) end
+		end)
 		if not selectedTab and not _internal then
 			select()
 		else
@@ -764,6 +1049,7 @@ function Library:CreateWindow(settings)
 				Parent = slot,
 			})
 			corner(f, 10)
+			hairline(f, 10)
 			local squish = create("UIScale", { Parent = f })
 
 			local b = create("TextButton", {
@@ -791,10 +1077,17 @@ function Library:CreateWindow(settings)
 			return { Destroy = function() slot:Destroy() end }
 		end
 
-		-- Toggle (knob stretch, halo pulse, row flash) ---------------
+		-- Toggle (knob stretch, halo pulse, row flash, optional Loop) -
 		function Tab:CreateToggle(o)
-			local value = o.CurrentValue == true
-			local token = 0
+			local flag = flagOf(o, "Toggle")
+			local value
+			if flags[flag] ~= nil then
+				value = flags[flag] == true
+			else
+				value = o.CurrentValue == true
+			end
+			local token, loopId = 0, 0
+			local interval = o.Interval or 0.1
 
 			local f = newElement(page)
 			local l = label(f, o.Name or "Toggle", 14)
@@ -811,8 +1104,8 @@ function Library:CreateWindow(settings)
 			local knob = create("Frame", {
 				Size = UDim2.fromOffset(14, 14),
 				Position = UDim2.fromOffset(2, 2),
-				BackgroundColor3 = Color3.new(1, 1, 1),
 				BorderSizePixel = 0,
+				Bind = { BackgroundColor3 = "Knob" },
 				Parent = track,
 			})
 			corner(knob, 7)
@@ -870,23 +1163,65 @@ function Library:CreateWindow(settings)
 			end
 
 			local Toggle = {}
+
+			-- Loop: runs over and over while the toggle is on
+			local function startLoop()
+				if type(o.Loop) ~= "function" then return end
+				loopId += 1
+				local mine = loopId
+				task.spawn(function()
+					while value and mine == loopId and f:IsDescendantOf(game) do
+						local ok, err = pcall(o.Loop)
+						if not ok then
+							warn(string.format("[GuiLibrary] Loop error in '%s': %s (toggle switched off)", o.Name or "Toggle", tostring(err)))
+							if mine == loopId then Toggle:Set(false) end
+							break
+						end
+						task.wait(interval)
+					end
+				end)
+			end
+
 			function Toggle:Set(v, silent)
+				v = v == true
 				if v == value then return end
 				value = v
 				animate()
+				changed(flag, v)
+				if v then
+					startLoop()
+				else
+					loopId += 1
+				end
 				if not silent then fire(o.Callback, v) end
 			end
+			function Toggle:Get()
+				return value
+			end
+
 			click.MouseButton1Click:Connect(function() Toggle:Set(not value) end)
 			onTheme(track, paint)
 			paint()
+
+			-- Starting ON (default or restored from the save file): run it
+			if value then
+				task.defer(function()
+					if value then
+						fire(o.Callback, true)
+						startLoop()
+					end
+				end)
+			end
 			return Toggle
 		end
 
 		-- Slider -----------------------------------------------------
 		function Tab:CreateSlider(o)
+			local flag = flagOf(o, "Slider")
 			local min, max = o.Range and o.Range[1] or 0, o.Range and o.Range[2] or 100
 			local inc = o.Increment or 1
-			local value = o.CurrentValue or min
+			local fromSave = type(flags[flag]) == "number"
+			local value = fromSave and flags[flag] or (o.CurrentValue or min)
 
 			local f = newElement(page, 52)
 			local l = label(f, "", 14)
@@ -908,13 +1243,27 @@ function Library:CreateWindow(settings)
 				Parent = bar,
 			})
 			corner(fill, 4)
+			local handle = create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(1, 0.5),
+				Size = UDim2.fromOffset(12, 12),
+				BorderSizePixel = 0,
+				Bind = { BackgroundColor3 = "Text" },
+				Parent = fill,
+			})
+			corner(handle, 6)
 
 			local Slider = {}
-			function Slider:Set(v, silent)
+			local function render(v)
 				v = math.clamp(math.floor(v / inc + 0.5) * inc, min, max)
 				value = v
 				fill.Size = UDim2.fromScale((v - min) / (max - min), 1)
 				l.Text = string.format("%s: %s%s", o.Name or "Slider", tostring(math.round(v * 100) / 100), o.Suffix and (" " .. o.Suffix) or "")
+				return v
+			end
+			function Slider:Set(v, silent)
+				v = render(v)
+				changed(flag, v)
 				if not silent then fire(o.Callback, v) end
 			end
 
@@ -926,6 +1275,7 @@ function Library:CreateWindow(settings)
 			bar.InputBegan:Connect(function(input)
 				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 					sliding = true
+					tween(handle, { Size = UDim2.fromOffset(16, 16) }, 0.12, Enum.EasingStyle.Back)
 					fromX(input.Position.X)
 				end
 			end)
@@ -936,16 +1286,25 @@ function Library:CreateWindow(settings)
 			end)
 			UserInputService.InputEnded:Connect(function(input)
 				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-					sliding = false
+					if sliding then
+						sliding = false
+						tween(handle, { Size = UDim2.fromOffset(12, 12) }, 0.15)
+					end
 				end
 			end)
 
-			Slider:Set(value, true)
+			render(value)
+			if fromSave then
+				task.defer(function() fire(o.Callback, value) end)
+			end
 			return Slider
 		end
 
 		-- Input ------------------------------------------------------
 		function Tab:CreateInput(o)
+			local flag = flagOf(o, "Input")
+			local fromSave = type(flags[flag]) == "string" and flags[flag] ~= ""
+
 			local f = newElement(page)
 			local l = label(f, o.Name or "Input", 14)
 			l.Size = UDim2.new(0.5, -12, 1, 0)
@@ -955,7 +1314,7 @@ function Library:CreateWindow(settings)
 				Size = UDim2.new(0.5, -20, 0, 24),
 				Position = UDim2.new(0.5, 8, 0.5, -12),
 				BorderSizePixel = 0,
-				Text = "",
+				Text = fromSave and flags[flag] or "",
 				PlaceholderText = o.PlaceholderText or "",
 				Font = Enum.Font.Gotham,
 				TextSize = 13,
@@ -965,16 +1324,40 @@ function Library:CreateWindow(settings)
 			})
 			corner(box, 8)
 			box.FocusLost:Connect(function()
+				if not o.RemoveTextAfterFocusLost then
+					changed(flag, box.Text)
+				end
 				fire(o.Callback, box.Text)
 				if o.RemoveTextAfterFocusLost then box.Text = "" end
 			end)
-			return { Set = function(_, t) box.Text = t end }
+
+			if fromSave then
+				task.defer(function() fire(o.Callback, box.Text) end)
+			end
+			return {
+				Set = function(_, t)
+					box.Text = t
+					if not o.RemoveTextAfterFocusLost then changed(flag, t) end
+				end,
+			}
 		end
 
 		-- Dropdown ---------------------------------------------------
 		function Tab:CreateDropdown(o)
+			local flag = flagOf(o, "Dropdown")
 			local options = o.Options or {}
 			local current = o.CurrentOption or options[1]
+
+			local fromSave = false
+			if flags[flag] ~= nil then
+				for _, opt in ipairs(options) do
+					if tostring(opt) == tostring(flags[flag]) then
+						current = opt
+						fromSave = true
+						break
+					end
+				end
+			end
 
 			local f = newElement(page, 34)
 			f.ClipsDescendants = true
@@ -1010,6 +1393,7 @@ function Library:CreateWindow(settings)
 			function Dropdown:Set(v, silent)
 				current = v
 				refreshHeader()
+				changed(flag, v)
 				if not silent then fire(o.Callback, v) end
 			end
 
@@ -1039,13 +1423,26 @@ function Library:CreateWindow(settings)
 			end
 
 			refreshHeader()
+			if fromSave then
+				task.defer(function() fire(o.Callback, current) end)
+			end
 			return Dropdown
 		end
 
 		-- Keybind ----------------------------------------------------
 		-- Callback(key) fires when the bound key is pressed; Changed(key) fires when rebound.
 		function Tab:CreateKeybind(o)
+			local flag = flagOf(o, "Keybind")
 			local key = o.CurrentKeybind or Enum.KeyCode.Unknown
+
+			local fromSave = false
+			if type(flags[flag]) == "string" then
+				local ok, saved = pcall(function() return Enum.KeyCode[flags[flag]] end)
+				if ok and saved then
+					key = saved
+					fromSave = true
+				end
+			end
 
 			local f = newElement(page)
 			local l = label(f, o.Name or "Keybind", 14)
@@ -1068,6 +1465,7 @@ function Library:CreateWindow(settings)
 			function Keybind:Set(k, silent)
 				key = k
 				btn.Text = k.Name
+				changed(flag, k.Name)
 				if not silent then fire(o.Changed, k) end
 			end
 
@@ -1097,6 +1495,9 @@ function Library:CreateWindow(settings)
 			end)
 			f.Destroying:Connect(function() pressConn:Disconnect() end)
 
+			if fromSave then
+				task.defer(function() fire(o.Changed, key) end)
+			end
 			return Keybind
 		end
 
@@ -1122,6 +1523,20 @@ function Library:CreateWindow(settings)
 			toggleKey = key
 		end,
 	})
+	SettingsTab:CreateToggle({
+		Name = "Info Bar",
+		CurrentValue = settings.InfoBar ~= false,
+		Callback = function(v)
+			Window:SetInfoBar(v)
+		end,
+	})
+	if not saveEnabled then
+		SettingsTab:CreateLabel("Autosave: off")
+	elseif not hasFiles then
+		SettingsTab:CreateLabel("Autosave: unavailable (no file access here)")
+	else
+		SettingsTab:CreateLabel("Autosave: on  -  " .. filePath)
+	end
 	Window.SettingsTab = SettingsTab
 
 	-- Fade the window in
@@ -1135,7 +1550,11 @@ end
 --
 --   local Window = Library:CreateWindow({ Name = "My Hub" })
 --   local Tab = Window:CreateTab("Main")
---   Tab:CreateButton({ Name = "Click Me", Callback = function() print("hi") end })
+--   Tab:CreateToggle({
+--       Name = "Spam hi",
+--       Loop = function() print("hi") end,   -- keeps running until switched off
+--       Interval = 0.5,
+--   })
 ----------------------------------------------------------------------
 
 return Library
