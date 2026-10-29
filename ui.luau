@@ -1720,6 +1720,71 @@ function Library:CreateWindow(settings)
 		end
 	end)
 
+	-- Resize: drag the grip in the bottom-right corner (top-left corner stays put)
+	local MinSize = Vector2.new(400, 260)
+	local MaxSize = Vector2.new(1000, 700)
+	local grip = create("TextButton", {
+		Size = UDim2.fromOffset(22, 22),
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		AutoButtonColor = false,
+		ZIndex = 20,
+		Parent = main,
+	})
+	local gripLines = {}
+	for i = 1, 3 do
+		local ln = create("Frame", {
+			Size = UDim2.fromOffset(2 + i * 3, 2),
+			AnchorPoint = Vector2.new(1, 1),
+			Position = UDim2.new(1, -5, 1, -3 - (3 - i) * 4),
+			Rotation = 0,
+			BackgroundTransparency = 0.5,
+			BorderSizePixel = 0,
+			Bind = { BackgroundColor3 = "SubText" },
+			ZIndex = 20,
+			Parent = grip,
+		})
+		corner(ln, 1)
+		table.insert(gripLines, ln)
+	end
+	local function gripGlow(on)
+		for _, ln in ipairs(gripLines) do
+			tween(ln, { BackgroundTransparency = on and 0.1 or 0.5 }, 0.15)
+		end
+	end
+	grip.MouseEnter:Connect(function() gripGlow(true) end)
+	grip.MouseLeave:Connect(function() gripGlow(false) end)
+	local resizeDrag, resizeStart, resizeStartSize, resizeStartPos
+	grip.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			resizeDrag = true
+			resizeStart = input.Position
+			resizeStartSize = Vector2.new(fullSize.X.Offset, fullSize.Y.Offset)
+			resizeStartPos = holder.Position
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if resizeDrag and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local d = (input.Position - resizeStart) / math.max(popScale.Scale, 0.01)
+			local w = math.clamp(resizeStartSize.X + d.X, MinSize.X, MaxSize.X)
+			local h = math.clamp(resizeStartSize.Y + d.Y, MinSize.Y, MaxSize.Y)
+			fullSize = UDim2.fromOffset(w, h)
+			holder.Size = fullSize
+			-- holder is centre-anchored: shift by half the change so the top-left corner stays fixed
+			holder.Position = UDim2.new(
+				resizeStartPos.X.Scale, resizeStartPos.X.Offset + (w - resizeStartSize.X) / 2,
+				resizeStartPos.Y.Scale, resizeStartPos.Y.Offset + (h - resizeStartSize.Y) / 2
+			)
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			resizeDrag = false
+		end
+	end)
+
 	-- Minimize (keeps the top edge in place) / close (fades out first)
 	local minimized = false
 	local resizing = false
@@ -1731,6 +1796,7 @@ function Library:CreateWindow(settings)
 		filler.Visible = not minimized
 		sheen.Visible = not minimized
 		sideDivider.Visible = not minimized
+		grip.Visible = not minimized
 
 		local curH = holder.Size.Y.Offset
 		local newH = minimized and 36 or fullSize.Y.Offset
