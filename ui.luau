@@ -1,7 +1,7 @@
 --[[
 	Rayfield/Sirius-style GUI library (self-contained)
-	Place as a LocalScript in StarterPlayer > StarterPlayerScripts
-	(or as a ModuleScript and require it)
+	Put this in a ModuleScript named GuiLibrary and require() it (see Example.lua),
+	or paste your own code at the bottom, above `return Library`, to use it as one LocalScript.
 
 	WINDOW
 		Library:CreateWindow({
@@ -41,6 +41,7 @@
 	where that doesn't exist, the Settings tab says so and everything else keeps working.
 
 	Library:SetTheme(name) / Library:Notify({Title, Content, Duration})
+	Library:SetFont("Default" | "Modern" | "Clean" | "Techno" | "Gothic" | "Elegant" | "Retro" | "Rounded")
 ]]
 
 local Players = game:GetService("Players")
@@ -61,15 +62,64 @@ local SprinkleCount = 130     -- floating specks on the background (0 = off)
 local GlowEnabled = true     -- soft accent glow + moving shine behind the window
 
 ----------------------------------------------------------------------
--- Fonts (swap any of these for a different look)
+-- Fonts
 ----------------------------------------------------------------------
-local Fonts = {
-	Title = Enum.Font.Oswald,       -- window title, notification titles, splash
-	Heading = Enum.Font.GothamBold, -- values, top-bar buttons, emphasis
-	Body = Enum.Font.GothamMedium,  -- labels and tabs
-	Light = Enum.Font.Gotham,       -- inputs and dropdown options
-	Mono = Enum.Font.RobotoMono,    -- info bar
+-- Pick one in Settings > Font, or call Library:SetFont("Gothic").
+-- Each preset fills four roles; add your own presets below if you like.
+local function font(name, fallback)
+	local ok, f = pcall(function() return Enum.Font[name] end)
+	return (ok and f) or fallback
+end
+local function preset(title, heading, body, light)
+	return {
+		Title = font(title, Enum.Font.GothamBold),
+		Heading = font(heading, Enum.Font.GothamBold),
+		Body = font(body, Enum.Font.GothamMedium),
+		Light = font(light, Enum.Font.Gotham),
+	}
+end
+local FontPresets = {
+	Default = preset("Oswald", "GothamBold", "GothamMedium", "Gotham"),
+	Modern = preset("GothamBold", "GothamBold", "GothamMedium", "Gotham"),
+	Clean = preset("BuilderSansExtraBold", "BuilderSansBold", "BuilderSansMedium", "BuilderSans"),
+	Techno = preset("Michroma", "Jura", "Jura", "Jura"),
+	Gothic = preset("GrenzeGotisch", "Oswald", "GothamMedium", "Gotham"),
+	Elegant = preset("Merriweather", "GothamBold", "Nunito", "Nunito"),
+	Retro = preset("Arcade", "Code", "Code", "Code"),
+	Rounded = preset("FredokaOne", "Nunito", "Nunito", "Nunito"),
 }
+local FontOrder = { "Default", "Modern", "Clean", "Techno", "Gothic", "Elegant", "Retro", "Rounded" }
+
+-- Title = window/notification titles, Heading = values and buttons, Body = labels and tabs,
+-- Light = inputs and dropdown options, Mono = info bar (stays monospaced so it doesn't jitter)
+local Fonts = { Mono = Enum.Font.RobotoMono }
+for k, v in pairs(FontPresets.Default) do
+	Fonts[k] = v
+end
+Library.CurrentFont = "Default"
+
+local fontBound = {} -- { instance, role }
+local function bindFont(inst, role)
+	inst.Font = Fonts[role]
+	table.insert(fontBound, { inst, role })
+end
+
+function Library:SetFont(name)
+	local p = FontPresets[name]
+	if not p then return end
+	for k, v in pairs(p) do
+		Fonts[k] = v
+	end
+	Library.CurrentFont = name
+	for i = #fontBound, 1, -1 do
+		local b = fontBound[i]
+		if b[1]:IsDescendantOf(game) then
+			b[1].Font = Fonts[b[2]]
+		else
+			table.remove(fontBound, i)
+		end
+	end
+end
 
 ----------------------------------------------------------------------
 -- Themes
@@ -196,8 +246,10 @@ local function create(class, props)
 	local inst = Instance.new(class)
 	local parent = props.Parent
 	local binds = props.Bind
+	local fontRole = props.FontRole
 	props.Parent = nil
 	props.Bind = nil
+	props.FontRole = nil
 	for k, v in pairs(props) do
 		inst[k] = v
 	end
@@ -205,6 +257,9 @@ local function create(class, props)
 		for prop, key in pairs(binds) do
 			bind(inst, prop, key)
 		end
+	end
+	if fontRole then
+		bindFont(inst, fontRole)
 	end
 	inst.Parent = parent
 	return inst
@@ -273,9 +328,10 @@ local function label(parent, text, size, colorKey, align)
 	return create("TextLabel", {
 		BackgroundTransparency = 1,
 		Text = text,
-		Font = Fonts.Body,
+		FontRole = "Body",
 		TextSize = size or 14,
 		TextXAlignment = align or Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
 		Bind = { TextColor3 = colorKey or "Text" },
 		Parent = parent,
 	})
@@ -383,7 +439,7 @@ function Library:Notify(settings)
 	local title = label(card, string.upper(settings.Title or "Notification"), 16)
 	title.Size = UDim2.new(1, -30, 0, 22)
 	title.Position = UDim2.fromOffset(20, 5)
-	title.Font = Fonts.Title
+	bindFont(title, "Title")
 	local body = label(card, settings.Content or "", 12, "SubText")
 	body.Size = UDim2.new(1, -30, 0, 26)
 	body.Position = UDim2.fromOffset(20, 28)
@@ -664,7 +720,7 @@ local function playSplash(opts, windowName, onReveal)
 						Size = UDim2.fromScale(1, 1),
 						BackgroundTransparency = 1,
 						Text = logoName,
-						Font = Fonts.Title,
+						FontRole = "Title",
 						TextScaled = true,
 						TextColor3 = color,
 						TextTransparency = 1,
@@ -700,7 +756,7 @@ local function playSplash(opts, windowName, onReveal)
 					Size = UDim2.fromScale(1, 0.06),
 					BackgroundTransparency = 1,
 					Text = string.upper(opts.Subtitle),
-					Font = Fonts.Title,
+					FontRole = "Title",
 					TextScaled = true,
 					TextColor3 = accentLight,
 					TextTransparency = 1,
@@ -767,7 +823,7 @@ local function playSplash(opts, windowName, onReveal)
 				Position = UDim2.fromScale(0.5 - trackW / 2, 0.85),
 				Size = UDim2.new(trackW * 0.7, 0, 0, 18),
 				BackgroundTransparency = 1,
-				Font = Fonts.Body,
+				FontRole = "Body",
 				TextSize = 13,
 				TextXAlignment = Enum.TextXAlignment.Left,
 				TextColor3 = Color3.fromRGB(150, 150, 160),
@@ -780,7 +836,7 @@ local function playSplash(opts, windowName, onReveal)
 				Position = UDim2.fromScale(0.5 + trackW / 2, 0.85),
 				Size = UDim2.new(trackW * 0.3, 0, 0, 18),
 				BackgroundTransparency = 1,
-				Font = Fonts.Heading,
+				FontRole = "Heading",
 				TextSize = 13,
 				TextXAlignment = Enum.TextXAlignment.Right,
 				TextColor3 = white,
@@ -793,7 +849,7 @@ local function playSplash(opts, windowName, onReveal)
 				Position = UDim2.fromScale(0.5, 0.95),
 				Size = UDim2.new(0.4, 0, 0, 14),
 				BackgroundTransparency = 1,
-				Font = Fonts.Body,
+				FontRole = "Body",
 				TextSize = 11,
 				TextColor3 = Color3.fromRGB(120, 120, 130),
 				TextTransparency = 1,
@@ -1101,12 +1157,9 @@ function Library:CreateWindow(settings)
 		})
 	end
 
-	-- Layout: a floating top bar plus the window body underneath it.
-	-- Each of the two gets its own glow and shine.
-	local BAR_H, GAP = 40, 8
-	local fullSize = UDim2.fromOffset(560, 380)
+	local fullSize = UDim2.fromOffset(560, 370)
 
-	-- Holder = the thing that moves/resizes. Everything below lives inside it.
+	-- Holder = the thing that moves/resizes. Glow, shine and the window all live inside it.
 	local holder = create("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
@@ -1117,23 +1170,11 @@ function Library:CreateWindow(settings)
 	})
 	local popScale = create("UIScale", { Scale = 0.9, Parent = holder })
 
-	local barHolder = create("Frame", {
-		Size = UDim2.new(1, 0, 0, BAR_H),
-		BackgroundTransparency = 1,
-		Parent = holder,
-	})
-	local bodyHolder = create("Frame", {
-		Position = UDim2.fromOffset(0, BAR_H + GAP),
-		Size = UDim2.new(1, 0, 1, -(BAR_H + GAP)),
-		BackgroundTransparency = 1,
-		Parent = holder,
-	})
-
-	-- Soft glow behind a piece of the window (stacked rounded frames, no image assets needed)
+	-- Soft glow behind something (stacked rounded frames, no image assets needed)
 	-- plus a "shine": a bright spot that travels around its edge.
-	local glowLayers, shines = {}, {}
-	local function makeGlow(parent, step, isBody, phase)
-		if not GlowEnabled then return end
+	local function makeGlow(parent, step, radius, phase)
+		local store = { layers = {}, phase = phase }
+		if not GlowEnabled then return store end
 		for i = 1, 7 do
 			local pad = i * step
 			local fr = create("Frame", {
@@ -1144,24 +1185,23 @@ function Library:CreateWindow(settings)
 				BorderSizePixel = 0,
 				Parent = parent,
 			})
-			corner(fr, 14 + pad)
-			table.insert(glowLayers, { frame = fr, base = 0.90 + i * 0.013, body = isBody })
+			corner(fr, radius + pad)
+			table.insert(store.layers, { frame = fr, base = 0.90 + i * 0.013 })
 		end
-
 		local shine = create("Frame", {
 			Size = UDim2.fromScale(1, 1),
 			BackgroundTransparency = 1,
 			Parent = parent,
 		})
-		corner(shine, 14)
-		local stroke = create("UIStroke", {
+		corner(shine, radius)
+		store.stroke = create("UIStroke", {
 			Thickness = 2,
 			Color = Color3.new(1, 1, 1),
 			Transparency = 1,
 			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 			Parent = shine,
 		})
-		local gradient = create("UIGradient", {
+		store.gradient = create("UIGradient", {
 			Transparency = NumberSequence.new({
 				NumberSequenceKeypoint.new(0, 1),
 				NumberSequenceKeypoint.new(0.3, 1),
@@ -1169,62 +1209,63 @@ function Library:CreateWindow(settings)
 				NumberSequenceKeypoint.new(0.7, 1),
 				NumberSequenceKeypoint.new(1, 1),
 			}),
-			Parent = stroke,
+			Parent = store.stroke,
 		})
-		table.insert(shines, { stroke = stroke, gradient = gradient, body = isBody, phase = phase })
+		return store
 	end
-	makeGlow(barHolder, 4, false, 0)
-	makeGlow(bodyHolder, 6, true, 140)
+	-- k = how visible the whole effect is (0..1), t = time
+	local function animateGlow(store, k, t)
+		local pulse = 0.8 + 0.2 * math.sin(t * 1.6 + store.phase)
+		for _, l in ipairs(store.layers) do
+			l.frame.BackgroundTransparency = 1 - (1 - l.base) * k * pulse
+		end
+		if store.stroke then
+			store.stroke.Transparency = 1 - 0.85 * k
+			store.gradient.Rotation = (t * 80 + store.phase * 60) % 360
+		end
+	end
+	local function recolorGlow(store)
+		for _, l in ipairs(store.layers) do
+			l.frame.BackgroundColor3 = Theme.Accent
+		end
+		if store.gradient then
+			store.gradient.Color = ColorSequence.new(Theme.Accent, Theme.Accent:Lerp(Color3.new(1, 1, 1), 0.65))
+		end
+	end
 
-	-- The two window pieces. CanvasGroups let each one fade in a single go.
-	local topbar = create("CanvasGroup", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = Alpha,
-		BorderSizePixel = 0,
-		GroupTransparency = 1,
-		Bind = { BackgroundColor3 = "Topbar" },
-		Parent = barHolder,
-	})
-	corner(topbar, 14)
+	local winGlow = makeGlow(holder, 6, 14, 0)
+
+	-- The window itself. A CanvasGroup lets the whole thing fade in one go.
 	local main = create("CanvasGroup", {
 		Size = UDim2.fromScale(1, 1),
 		BackgroundTransparency = Alpha,
 		BorderSizePixel = 0,
 		GroupTransparency = 1,
 		Bind = { BackgroundColor3 = "Background" },
-		Parent = bodyHolder,
+		Parent = holder,
 	})
 	corner(main, 14)
 
-	-- Recolor the effects whenever the theme changes
-	local function recolor()
-		for _, l in ipairs(glowLayers) do
-			l.frame.BackgroundColor3 = Theme.Accent
-		end
-		for _, s in ipairs(shines) do
-			s.gradient.Color = ColorSequence.new(Theme.Accent, Theme.Accent:Lerp(Color3.new(1, 1, 1), 0.65))
-		end
-		for _, s in ipairs(sprinkles) do
-			s.frame.BackgroundColor3 = s.accent and Theme.Accent or Color3.new(1, 1, 1)
-		end
-	end
-	onTheme(backdrop, recolor)
-	recolor()
-
 	----------------------------------------------------------------
-	-- Info bar (fps / ping / time), top right
+	-- Info bar (fps / ping / time), top right - with its own glow + shine
 	----------------------------------------------------------------
 	local infoOn = false
-	local infoBar = create("CanvasGroup", {
+	local infoHolder = create("Frame", {
 		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -14, 0, 12),
+		Position = UDim2.new(1, -24, 0, 18),
 		Size = UDim2.fromOffset(120, 28),
+		BackgroundTransparency = 1,
+		Visible = false,
+		Parent = gui,
+	})
+	local infoGlow = makeGlow(infoHolder, 3, 14, 1.5)
+	local infoBar = create("CanvasGroup", {
+		Size = UDim2.fromScale(1, 1),
 		GroupTransparency = 1,
 		BackgroundTransparency = 0.12,
 		BorderSizePixel = 0,
-		Visible = false,
 		Bind = { BackgroundColor3 = "Background" },
-		Parent = gui,
+		Parent = infoHolder,
 	})
 	corner(infoBar, 14)
 	local infoLabel = create("TextLabel", {
@@ -1241,6 +1282,17 @@ function Library:CreateWindow(settings)
 	})
 	hairline(infoBar, 14)
 
+	-- Recolor the effects whenever the theme changes
+	local function recolor()
+		recolorGlow(winGlow)
+		recolorGlow(infoGlow)
+		for _, s in ipairs(sprinkles) do
+			s.frame.BackgroundColor3 = s.accent and Theme.Accent or Color3.new(1, 1, 1)
+		end
+	end
+	onTheme(backdrop, recolor)
+	recolor()
+
 	local lastFps = 60
 	local barWidth = 0
 	local function refreshInfo(fps)
@@ -1256,10 +1308,16 @@ function Library:CreateWindow(settings)
 		local w = math.ceil(infoLabel.TextBounds.X) + 30
 		if w > barWidth then
 			barWidth = w
-			infoBar.Size = UDim2.fromOffset(w, 28)
+			infoHolder.Size = UDim2.fromOffset(w, 28)
 		end
 	end
 	onTheme(infoBar, function() refreshInfo() end)
+
+	local infoFade = Instance.new("NumberValue") -- 0 = hidden, 1 = shown
+	infoFade.Value = 0
+	infoFade.Changed:Connect(function(v)
+		infoBar.GroupTransparency = 1 - v
+	end)
 
 	local infoFrames, infoAcc = 0, 0
 	local infoConn = RunService.Heartbeat:Connect(function(dt)
@@ -1278,13 +1336,13 @@ function Library:CreateWindow(settings)
 		if v == infoOn then return end
 		infoOn = v
 		if v then
-			infoBar.Visible = true
+			infoHolder.Visible = true
 			refreshInfo()
-			tween(infoBar, { GroupTransparency = 0 }, 0.35)
+			tween(infoFade, { Value = 1 }, 0.4)
 		else
-			local t = tween(infoBar, { GroupTransparency = 1 }, 0.25)
+			local t = tween(infoFade, { Value = 0 }, 0.3)
 			t.Completed:Connect(function()
-				if not infoOn then infoBar.Visible = false end
+				if not infoOn then infoHolder.Visible = false end
 			end)
 		end
 	end
@@ -1294,23 +1352,15 @@ function Library:CreateWindow(settings)
 	----------------------------------------------------------------
 	local fade = Instance.new("NumberValue")
 	fade.Value = 0
-	local bodyFade = Instance.new("NumberValue") -- 1 = body shown, 0 = body hidden (minimized)
-	bodyFade.Value = 1
 	local fadeTween
 
-	local function apply()
-		local v, bf = fade.Value, bodyFade.Value
-		topbar.GroupTransparency = 1 - v
-		main.GroupTransparency = 1 - v * bf
+	local function apply(v)
+		main.GroupTransparency = 1 - v
 		popScale.Scale = 0.9 + 0.1 * v
 		backdrop.BackgroundTransparency = 1 - (1 - BackdropAlpha) * v
-		for _, s in ipairs(shines) do
-			s.stroke.Transparency = 1 - 0.85 * v * (s.body and bf or 1)
-		end
 	end
 	fade.Changed:Connect(apply)
-	bodyFade.Changed:Connect(apply)
-	apply()
+	apply(0)
 
 	local function fadeTo(target, time, onDone)
 		if fadeTween then fadeTween:Cancel() end
@@ -1332,55 +1382,75 @@ function Library:CreateWindow(settings)
 		fadeTween:Play()
 	end
 
-	-- Per-frame animation: shine rotation, glow breathing, sprinkle drift + twinkle
+	-- Per-frame animation: glows + shines, sprinkle drift + twinkle, element animators
 	local animators = {} -- per-element animations (slider shimmer, etc.)
 	local startTime = os.clock()
+	local winShown, infoShown = false, false
 	local frameConn = RunService.Heartbeat:Connect(function(dt)
-		local f = fade.Value
-		if f <= 0 then return end
-		local bf = bodyFade.Value
+		local f, inf = fade.Value, infoFade.Value
+		if f <= 0 and inf <= 0 and not winShown and not infoShown then return end
 		local t = os.clock() - startTime
 
-		local pulse = 0.8 + 0.2 * math.sin(t * 1.6)
-		for _, l in ipairs(glowLayers) do
-			local k = f * pulse * (l.body and bf or 1)
-			l.frame.BackgroundTransparency = 1 - (1 - l.base) * k
-		end
-		for _, s in ipairs(shines) do
-			s.gradient.Rotation = (t * 80 + s.phase) % 360
+		if f > 0 or winShown then
+			animateGlow(winGlow, f, t)
+			winShown = f > 0
+			if f > 0 then
+				for _, s in ipairs(sprinkles) do
+					s.y -= s.speed * dt
+					if s.y < -0.03 then
+						s.y = 1.03
+						s.x = math.random()
+					end
+					local px = s.x + math.sin(t * s.drift + s.phase) * 0.01
+					s.frame.Position = UDim2.fromScale(px, s.y)
+					local tw = 0.5 + 0.5 * math.sin(t * s.twinkle + s.phase)
+					s.frame.BackgroundTransparency = 1 - s.alpha * (0.3 + 0.7 * tw) * f
+				end
+
+				for i = #animators, 1, -1 do
+					local a = animators[i]
+					if a.inst:IsDescendantOf(game) then
+						a.fn(t)
+					else
+						table.remove(animators, i)
+					end
+				end
+			end
 		end
 
-		for _, s in ipairs(sprinkles) do
-			s.y -= s.speed * dt
-			if s.y < -0.03 then
-				s.y = 1.03
-				s.x = math.random()
-			end
-			local px = s.x + math.sin(t * s.drift + s.phase) * 0.01
-			s.frame.Position = UDim2.fromScale(px, s.y)
-			local tw = 0.5 + 0.5 * math.sin(t * s.twinkle + s.phase)
-			s.frame.BackgroundTransparency = 1 - s.alpha * (0.3 + 0.7 * tw) * f
-		end
-
-		for i = #animators, 1, -1 do
-			local a = animators[i]
-			if a.inst:IsDescendantOf(game) then
-				a.fn(t)
-			else
-				table.remove(animators, i)
-			end
+		if inf > 0 or infoShown then
+			animateGlow(infoGlow, inf, t)
+			infoShown = inf > 0
 		end
 	end)
 	gui.Destroying:Connect(function()
 		frameConn:Disconnect()
 		infoConn:Disconnect()
 		fade:Destroy()
-		bodyFade:Destroy()
+		infoFade:Destroy()
 	end)
 
 	----------------------------------------------------------------
-	-- Top bar
+	-- Topbar (part of the window)
 	----------------------------------------------------------------
+	local topbar = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 36),
+		BackgroundTransparency = Alpha,
+		BorderSizePixel = 0,
+		Bind = { BackgroundColor3 = "Topbar" },
+		Parent = main,
+	})
+	corner(topbar, 14)
+	-- Square off the topbar's bottom corners (hidden while minimized)
+	local filler = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 14),
+		Position = UDim2.new(0, 0, 1, -14),
+		BackgroundTransparency = Alpha,
+		BorderSizePixel = 0,
+		Bind = { BackgroundColor3 = "Topbar" },
+		Parent = topbar,
+	})
+
 	local dot = create("Frame", {
 		Size = UDim2.fromOffset(7, 7),
 		Position = UDim2.new(0, 16, 0.5, -3),
@@ -1393,7 +1463,7 @@ function Library:CreateWindow(settings)
 	local title = label(topbar, string.upper(settings.Name or "Window"), 18)
 	title.Size = UDim2.new(1, -130, 1, 0)
 	title.Position = UDim2.fromOffset(34, 0)
-	title.Font = Fonts.Title
+	bindFont(title, "Title")
 	-- faint accent outline on the title text gives it a soft glow
 	create("UIStroke", {
 		Thickness = 1,
@@ -1406,10 +1476,10 @@ function Library:CreateWindow(settings)
 	local function topButton(text, offset)
 		local b = create("TextButton", {
 			Size = UDim2.fromOffset(28, 28),
-			Position = UDim2.new(1, offset, 0, 6),
+			Position = UDim2.new(1, offset, 0, 4),
 			BackgroundTransparency = 1,
 			Text = text,
-			Font = Fonts.Heading,
+			FontRole = "Heading",
 			TextSize = 16,
 			Bind = { TextColor3 = "SubText" },
 			Parent = topbar,
@@ -1425,7 +1495,7 @@ function Library:CreateWindow(settings)
 	local settingsEntry, lastNormalEntry
 	local settingsBtn = create("TextButton", {
 		Size = UDim2.fromOffset(28, 28),
-		Position = UDim2.new(1, -96, 0, 6),
+		Position = UDim2.new(1, -96, 0, 4),
 		BackgroundTransparency = 1,
 		Text = "",
 		Parent = topbar,
@@ -1494,28 +1564,12 @@ function Library:CreateWindow(settings)
 	end)
 	onTheme(settingsBtn, refreshGear)
 
-	-- Soft highlight along the top of the bar, then its outline
-	local barSheen = create("Frame", {
-		Size = UDim2.new(1, 0, 0.7, 0),
-		BackgroundColor3 = Color3.new(1, 1, 1),
-		BorderSizePixel = 0,
-		Parent = topbar,
-	})
-	create("UIGradient", {
-		Rotation = 90,
-		Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.93),
-			NumberSequenceKeypoint.new(1, 1),
-		}),
-		Parent = barSheen,
-	})
-	hairline(topbar, 14, 0.3)
-
 	----------------------------------------------------------------
 	-- Window body: tab list + pages
 	----------------------------------------------------------------
 	local content = create("Frame", {
-		Size = UDim2.fromScale(1, 1),
+		Size = UDim2.new(1, 0, 1, -36),
+		Position = UDim2.fromOffset(0, 36),
 		BackgroundTransparency = 1,
 		Parent = main,
 	})
@@ -1544,17 +1598,25 @@ function Library:CreateWindow(settings)
 		Parent = content,
 	})
 
-	-- Hairline divider between the sidebar and the pages
+	-- Hairline dividers: under the topbar and between the sidebar and the pages
 	create("Frame", {
-		Size = UDim2.new(0, 1, 1, -20),
-		Position = UDim2.fromOffset(130, 10),
+		Size = UDim2.new(1, 0, 0, 1),
+		Position = UDim2.fromOffset(0, 36),
+		BackgroundTransparency = 0.4,
+		BorderSizePixel = 0,
+		Bind = { BackgroundColor3 = "Stroke" },
+		Parent = main,
+	})
+	local sideDivider = create("Frame", {
+		Size = UDim2.new(0, 1, 1, -52),
+		Position = UDim2.fromOffset(130, 44),
 		BackgroundTransparency = 0.5,
 		BorderSizePixel = 0,
 		Bind = { BackgroundColor3 = "Stroke" },
 		Parent = main,
 	})
 
-	-- Soft highlight across the top of the body for a bit of depth
+	-- Soft highlight across the top of the window for a bit of depth
 	local sheen = create("Frame", {
 		Size = UDim2.new(1, 0, 0, 170),
 		BackgroundColor3 = Color3.new(1, 1, 1),
@@ -1570,10 +1632,10 @@ function Library:CreateWindow(settings)
 		Parent = sheen,
 	})
 
-	-- Body outline (last, so it sits on top of everything)
+	-- Window outline (last, so it sits on top of everything)
 	hairline(main, 14, 0.3)
 
-	-- Dragging (by the top bar)
+	-- Dragging
 	local dragging, dragStart, startPos
 	topbar.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -1592,42 +1654,30 @@ function Library:CreateWindow(settings)
 		end
 	end)
 
-	-- Minimize: the body fades away and only the floating top bar stays (top edge fixed)
+	-- Minimize (keeps the top edge in place) / close (fades out first)
 	local minimized = false
 	local resizing = false
-	local function setHolderHeight(h, time)
-		local cur = holder.Size.Y.Offset
-		return tween(holder, {
-			Size = UDim2.fromOffset(fullSize.X.Offset, h),
-			Position = holder.Position + UDim2.fromOffset(0, (h - cur) / 2),
-		}, time, Enum.EasingStyle.Quint)
-	end
 	minBtn.MouseButton1Click:Connect(function()
 		if resizing then return end
 		resizing = true
 		minimized = not minimized
-		if minimized then
-			local t = tween(bodyFade, { Value = 0 }, 0.2)
-			t.Completed:Connect(function()
-				bodyHolder.Visible = false
-				local t2 = setHolderHeight(BAR_H, 0.3)
-				t2.Completed:Connect(function() resizing = false end)
-			end)
-		else
-			bodyHolder.Visible = true
-			local t = setHolderHeight(fullSize.Y.Offset, 0.3)
-			t.Completed:Connect(function()
-				local t2 = tween(bodyFade, { Value = 1 }, 0.25)
-				t2.Completed:Connect(function() resizing = false end)
-			end)
-		end
-	end)
+		content.Visible = not minimized
+		filler.Visible = not minimized
+		sheen.Visible = not minimized
+		sideDivider.Visible = not minimized
 
-	-- Close (fades out first)
+		local curH = holder.Size.Y.Offset
+		local newH = minimized and 36 or fullSize.Y.Offset
+		local t = tween(holder, {
+			Size = UDim2.fromOffset(fullSize.X.Offset, newH),
+			Position = holder.Position + UDim2.fromOffset(0, (newH - curH) / 2),
+		}, 0.3, Enum.EasingStyle.Quint)
+		t.Completed:Connect(function() resizing = false end)
+	end)
 	closeBtn.MouseButton1Click:Connect(function()
 		visible = false
 		infoOn = false
-		tween(infoBar, { GroupTransparency = 1 }, 0.25)
+		tween(infoFade, { Value = 0 }, 0.25)
 		fadeTo(0, 0.25, function()
 			gui:Destroy()
 		end)
@@ -1689,7 +1739,7 @@ function Library:CreateWindow(settings)
 			BorderSizePixel = 0,
 			Text = name,
 			TextXAlignment = Enum.TextXAlignment.Left,
-			Font = Fonts.Body,
+			FontRole = "Body",
 			TextSize = 13,
 			LayoutOrder = _internal and 1000 or tabCount, -- Settings always last
 			Bind = { BackgroundColor3 = "Element" },
@@ -1795,7 +1845,7 @@ function Library:CreateWindow(settings)
 				Size = UDim2.fromScale(1, 1),
 				BackgroundTransparency = 1,
 				Text = o.Name or "Button",
-				Font = Fonts.Body,
+				FontRole = "Body",
 				TextSize = 14,
 				Bind = { TextColor3 = "Text" },
 				Parent = f,
@@ -1971,7 +2021,7 @@ function Library:CreateWindow(settings)
 			local vl = label(f, "", 14, "Accent", Enum.TextXAlignment.Right)
 			vl.Size = UDim2.new(0.4, -12, 0, 24)
 			vl.Position = UDim2.new(0.6, 0, 0, 4)
-			vl.Font = Fonts.Heading
+			bindFont(vl, "Heading")
 
 			local bar = create("Frame", {
 				Size = UDim2.new(1, -24, 0, 8),
@@ -2169,7 +2219,7 @@ function Library:CreateWindow(settings)
 				BorderSizePixel = 0,
 				Text = fromSave and flags[flag] or "",
 				PlaceholderText = o.PlaceholderText or "",
-				Font = Fonts.Light,
+				FontRole = "Light",
 				TextSize = 13,
 				ClearTextOnFocus = false,
 				Bind = { BackgroundColor3 = "Background", TextColor3 = "Text", PlaceholderColor3 = "SubText" },
@@ -2263,7 +2313,7 @@ function Library:CreateWindow(settings)
 					Size = UDim2.new(1, 0, 0, 26),
 					BorderSizePixel = 0,
 					Text = tostring(opt),
-					Font = Fonts.Light,
+					FontRole = "Light",
 					TextSize = 13,
 					Bind = { BackgroundColor3 = "Background", TextColor3 = "Text" },
 					Parent = list,
@@ -2307,7 +2357,7 @@ function Library:CreateWindow(settings)
 				Position = UDim2.new(1, -108, 0.5, -12),
 				BorderSizePixel = 0,
 				Text = key.Name,
-				Font = Fonts.Body,
+				FontRole = "Body",
 				TextSize = 12,
 				Bind = { BackgroundColor3 = "Background", TextColor3 = "Text" },
 				Parent = f,
@@ -2368,6 +2418,14 @@ function Library:CreateWindow(settings)
 		CurrentOption = Library.CurrentTheme,
 		Callback = function(name)
 			Library:SetTheme(name)
+		end,
+	})
+	SettingsTab:CreateDropdown({
+		Name = "Font",
+		Options = FontOrder,
+		CurrentOption = Library.CurrentFont,
+		Callback = function(name)
+			Library:SetFont(name)
 		end,
 	})
 	toggleBind = SettingsTab:CreateKeybind({
