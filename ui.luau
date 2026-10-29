@@ -51,8 +51,8 @@ local Library = {}
 -- Look & feel (tweak these)
 ----------------------------------------------------------------------
 local Alpha = 0.06           -- window see-through amount (0 = solid)
-local BackdropAlpha = 0.78   -- dark screen behind the window (1 = invisible)
-local SprinkleCount = 45     -- floating specks on the background (0 = off)
+local BackdropAlpha = 0.5    -- dark screen behind the window (1 = invisible)
+local SprinkleCount = 130     -- floating specks on the background (0 = off)
 local GlowEnabled = true     -- soft accent glow + moving shine behind the window
 
 ----------------------------------------------------------------------
@@ -481,7 +481,7 @@ function Library:CreateWindow(settings)
 	})
 	local sprinkles = {}
 	for i = 1, SprinkleCount do
-		local size = math.random(2, 5)
+		local size = math.random(2, 6)
 		local fr = create("Frame", {
 			Size = UDim2.fromOffset(size, size),
 			AnchorPoint = Vector2.new(0.5, 0.5),
@@ -498,7 +498,7 @@ function Library:CreateWindow(settings)
 			drift = 0.3 + math.random() * 0.7,
 			phase = math.random() * math.pi * 2,
 			twinkle = 0.8 + math.random() * 1.8,
-			alpha = 0.3 + math.random() * 0.45,
+			alpha = 0.35 + math.random() * 0.5,
 			accent = i % 2 == 0,
 		})
 	end
@@ -698,6 +698,7 @@ function Library:CreateWindow(settings)
 	end
 
 	-- Per-frame animation: shine rotation, glow breathing, sprinkle drift + twinkle
+	local animators = {} -- per-element animations (slider shimmer, etc.)
 	local startTime = os.clock()
 	local frameConn = RunService.Heartbeat:Connect(function(dt)
 		local f = fade.Value
@@ -721,6 +722,15 @@ function Library:CreateWindow(settings)
 			s.frame.Position = UDim2.fromScale(px, s.y)
 			local tw = 0.5 + 0.5 * math.sin(t * s.twinkle + s.phase)
 			s.frame.BackgroundTransparency = 1 - s.alpha * (0.3 + 0.7 * tw) * f
+		end
+
+		for i = #animators, 1, -1 do
+			local a = animators[i]
+			if a.inst:IsDescendantOf(game) then
+				a.fn(t)
+			else
+				table.remove(animators, i)
+			end
 		end
 	end)
 	gui.Destroying:Connect(function()
@@ -781,6 +791,79 @@ function Library:CreateWindow(settings)
 	end
 	local closeBtn = topButton("X", -36)
 	local minBtn = topButton("-", -66)
+
+	-- Settings gear (opens/closes the Settings page). Drawn from frames, so it needs no assets.
+	local settingsEntry, lastNormalEntry
+	local settingsBtn = create("TextButton", {
+		Size = UDim2.fromOffset(28, 28),
+		Position = UDim2.new(1, -96, 0, 4),
+		BackgroundTransparency = 1,
+		Text = "",
+		Parent = topbar,
+	})
+	local gearIcon = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(18, 18),
+		BackgroundTransparency = 1,
+		Parent = settingsBtn,
+	})
+	local gearHub = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(6, 6),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Parent = gearIcon,
+	})
+	create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = gearHub })
+	local gearStroke = create("UIStroke", {
+		Thickness = 3,
+		Color = Theme.SubText,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		Parent = gearHub,
+	})
+	local gearTeeth = {}
+	for i = 0, 7 do
+		local a = math.rad(i * 45)
+		table.insert(gearTeeth, create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5 + math.sin(a) * (7 / 18), 0.5 - math.cos(a) * (7 / 18)),
+			Size = UDim2.fromOffset(3, 5),
+			Rotation = i * 45,
+			BackgroundColor3 = Theme.SubText,
+			BorderSizePixel = 0,
+			Parent = gearIcon,
+		}))
+	end
+
+	local gearHover = false
+	local function refreshGear()
+		local active = settingsEntry ~= nil and selectedTab == settingsEntry
+		local color = active and Theme.Accent or (gearHover and Theme.Text or Theme.SubText)
+		tween(gearStroke, { Color = color }, 0.15)
+		for _, tooth in ipairs(gearTeeth) do
+			tween(tooth, { BackgroundColor3 = color }, 0.15)
+		end
+		tween(gearIcon, { Rotation = active and 90 or 0 }, 0.4, Enum.EasingStyle.Back)
+	end
+	settingsBtn.MouseEnter:Connect(function()
+		gearHover = true
+		refreshGear()
+	end)
+	settingsBtn.MouseLeave:Connect(function()
+		gearHover = false
+		refreshGear()
+	end)
+	settingsBtn.MouseButton1Click:Connect(function()
+		if not settingsEntry then return end
+		if selectedTab == settingsEntry then
+			if lastNormalEntry then lastNormalEntry.select() end
+		else
+			settingsEntry.select()
+		end
+	end)
+	onTheme(settingsBtn, refreshGear)
 
 	-- Tab list + page container
 	local content = create("Frame", {
@@ -961,6 +1044,7 @@ function Library:CreateWindow(settings)
 			Parent = tabBar,
 		})
 		corner(tabButton, 10)
+		tabButton.Visible = not _internal
 		create("UIPadding", { PaddingLeft = UDim.new(0, 16), Parent = tabButton })
 		local indicator = create("Frame", {
 			Size = UDim2.fromOffset(3, 14),
@@ -1003,11 +1087,14 @@ function Library:CreateWindow(settings)
 		end
 		local function select()
 			selectedTab = entry
+			if not _internal then lastNormalEntry = entry end
+			refreshGear()
 			for _, t in ipairs(tabs) do
 				t.page.Visible = (t == entry)
 				styleTab(t)
 			end
 		end
+		entry.select = select
 		onTheme(tabButton, function() styleTab(entry) end)
 		tabButton.MouseButton1Click:Connect(select)
 		tabButton.MouseEnter:Connect(function()
@@ -1215,7 +1302,7 @@ function Library:CreateWindow(settings)
 			return Toggle
 		end
 
-		-- Slider -----------------------------------------------------
+		-- Slider (gradient fill + shimmer, glow halo, press pulse, value pop) ---
 		function Tab:CreateSlider(o)
 			local flag = flagOf(o, "Slider")
 			local min, max = o.Range and o.Range[1] or 0, o.Range and o.Range[2] or 100
@@ -1223,26 +1310,66 @@ function Library:CreateWindow(settings)
 			local fromSave = type(flags[flag]) == "number"
 			local value = fromSave and flags[flag] or (o.CurrentValue or min)
 
-			local f = newElement(page, 52)
-			local l = label(f, "", 14)
-			l.Size = UDim2.new(1, -24, 0, 24)
-			l.Position = UDim2.fromOffset(12, 3)
+			local f = newElement(page, 54)
+			hover(f, f)
+
+			local l = label(f, o.Name or "Slider", 14)
+			l.Size = UDim2.new(0.6, -12, 0, 24)
+			l.Position = UDim2.fromOffset(12, 4)
+			local vl = label(f, "", 14, "Accent", Enum.TextXAlignment.Right)
+			vl.Size = UDim2.new(0.4, -12, 0, 24)
+			vl.Position = UDim2.new(0.6, 0, 0, 4)
+			vl.Font = Enum.Font.GothamBold
 
 			local bar = create("Frame", {
 				Size = UDim2.new(1, -24, 0, 8),
-				Position = UDim2.new(0, 12, 1, -18),
+				Position = UDim2.new(0, 12, 1, -19),
 				BorderSizePixel = 0,
 				Bind = { BackgroundColor3 = "Background" },
 				Parent = f,
 			})
 			corner(bar, 4)
+
+			-- Fill: white base so the gradient supplies the color
 			local fill = create("Frame", {
 				Size = UDim2.fromScale(0, 1),
+				BackgroundColor3 = Color3.new(1, 1, 1),
 				BorderSizePixel = 0,
-				Bind = { BackgroundColor3 = "Accent" },
 				Parent = bar,
 			})
 			corner(fill, 4)
+			local fillGradient = create("UIGradient", { Parent = fill })
+
+			-- A light band that sweeps across the filled part
+			local shimmer = create("Frame", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundColor3 = Color3.new(1, 1, 1),
+				BorderSizePixel = 0,
+				Parent = fill,
+			})
+			corner(shimmer, 4)
+			local shimmerGradient = create("UIGradient", {
+				Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 1),
+					NumberSequenceKeypoint.new(0.4, 1),
+					NumberSequenceKeypoint.new(0.5, 0.6),
+					NumberSequenceKeypoint.new(0.6, 1),
+					NumberSequenceKeypoint.new(1, 1),
+				}),
+				Parent = shimmer,
+			})
+
+			-- Glow behind the handle (grows while dragging)
+			local halo = create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(1, 0.5),
+				Size = UDim2.fromOffset(12, 12),
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Bind = { BackgroundColor3 = "Accent" },
+				Parent = fill,
+			})
+			create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = halo })
 			local handle = create("Frame", {
 				AnchorPoint = Vector2.new(0.5, 0.5),
 				Position = UDim2.fromScale(1, 0.5),
@@ -1253,12 +1380,82 @@ function Library:CreateWindow(settings)
 			})
 			corner(handle, 6)
 
+			local function recolor()
+				fillGradient.Color = ColorSequence.new(
+					Theme.Accent:Lerp(Color3.new(0, 0, 0), 0.25),
+					Theme.Accent:Lerp(Color3.new(1, 1, 1), 0.2)
+				)
+			end
+			onTheme(bar, recolor)
+			recolor()
+
+			table.insert(animators, {
+				inst = f,
+				fn = function(t)
+					shimmerGradient.Offset = Vector2.new(((t * 0.45) % 2) - 1, 0)
+				end,
+			})
+
+			-- Handle states: idle 12px, hover 14px, dragging 16px + halo
+			local sliding, hovering = false, false
+			local function refreshHandle()
+				local s = sliding and 16 or (hovering and 14 or 12)
+				tween(handle, { Size = UDim2.fromOffset(s, s) }, 0.18, Enum.EasingStyle.Back)
+				local h = sliding and 30 or 12
+				tween(halo, {
+					Size = UDim2.fromOffset(h, h),
+					BackgroundTransparency = sliding and 0.75 or 1,
+				}, 0.2)
+			end
+			f.MouseEnter:Connect(function()
+				hovering = true
+				refreshHandle()
+			end)
+			f.MouseLeave:Connect(function()
+				hovering = false
+				refreshHandle()
+			end)
+
+			-- Expanding ring from the handle when you grab it
+			local function pulse()
+				local ring = create("Frame", {
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Position = UDim2.fromScale(1, 0.5),
+					Size = UDim2.fromOffset(12, 12),
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Parent = fill,
+				})
+				create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = ring })
+				local stroke = create("UIStroke", {
+					Thickness = 2,
+					Transparency = 0.2,
+					ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+					Bind = { Color = "Accent" },
+					Parent = ring,
+				})
+				tween(ring, { Size = UDim2.fromOffset(36, 36) }, 0.45)
+				tween(stroke, { Transparency = 1 }, 0.45)
+				task.delay(0.5, function() ring:Destroy() end)
+			end
+
 			local Slider = {}
-			local function render(v)
+			local function render(v, instant)
 				v = math.clamp(math.floor(v / inc + 0.5) * inc, min, max)
+				local moved = v ~= value
 				value = v
-				fill.Size = UDim2.fromScale((v - min) / (max - min), 1)
-				l.Text = string.format("%s: %s%s", o.Name or "Slider", tostring(math.round(v * 100) / 100), o.Suffix and (" " .. o.Suffix) or "")
+				local size = UDim2.fromScale(max > min and (v - min) / (max - min) or 0, 1)
+				if instant then
+					fill.Size = size
+				else
+					tween(fill, { Size = size }, 0.09)
+				end
+				vl.Text = string.format("%s%s", tostring(math.round(v * 100) / 100), o.Suffix and (" " .. o.Suffix) or "")
+				if moved and not instant then
+					-- the number "pops" when it changes
+					vl.TextSize = 17
+					tween(vl, { TextSize = 14 }, 0.2)
+				end
 				return v
 			end
 			function Slider:Set(v, silent)
@@ -1267,33 +1464,37 @@ function Library:CreateWindow(settings)
 				if not silent then fire(o.Callback, v) end
 			end
 
-			local sliding = false
 			local function fromX(x)
 				local rel = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
 				Slider:Set(min + (max - min) * rel)
 			end
-			bar.InputBegan:Connect(function(input)
+			local conns = {}
+			table.insert(conns, bar.InputBegan:Connect(function(input)
 				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 					sliding = true
-					tween(handle, { Size = UDim2.fromOffset(16, 16) }, 0.12, Enum.EasingStyle.Back)
+					refreshHandle()
+					pulse()
 					fromX(input.Position.X)
 				end
-			end)
-			UserInputService.InputChanged:Connect(function(input)
+			end))
+			table.insert(conns, UserInputService.InputChanged:Connect(function(input)
 				if sliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 					fromX(input.Position.X)
 				end
-			end)
-			UserInputService.InputEnded:Connect(function(input)
+			end))
+			table.insert(conns, UserInputService.InputEnded:Connect(function(input)
 				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 					if sliding then
 						sliding = false
-						tween(handle, { Size = UDim2.fromOffset(12, 12) }, 0.15)
+						refreshHandle()
 					end
 				end
+			end))
+			f.Destroying:Connect(function()
+				for _, c in ipairs(conns) do c:Disconnect() end
 			end)
 
-			render(value)
+			render(value, true)
 			if fromSave then
 				task.defer(function() fire(o.Callback, value) end)
 			end
@@ -1501,6 +1702,7 @@ function Library:CreateWindow(settings)
 			return Keybind
 		end
 
+		Tab._entry = entry
 		return Tab
 	end
 
@@ -1538,6 +1740,8 @@ function Library:CreateWindow(settings)
 		SettingsTab:CreateLabel("Autosave: on  -  " .. filePath)
 	end
 	Window.SettingsTab = SettingsTab
+	settingsEntry = SettingsTab._entry
+	refreshGear()
 
 	-- Fade the window in
 	Window:SetVisible(true)
