@@ -2,7 +2,7 @@
 	Rayfield/Sirius-style GUI library (self-contained)
 	Place as a LocalScript in StarterPlayer > StarterPlayerScripts
 	(or as a ModuleScript and require it)
- 
+
 	API:
 		Library:CreateWindow({Name = "...", ToggleKey = Enum.KeyCode.RightShift, Theme = "Dark"})
 		Window:CreateTab("Name")
@@ -10,23 +10,27 @@
 		Window:Toggle() / Window:SetVisible(bool) / Window:SetToggleKey(Enum.KeyCode)
 		Library:SetTheme("Dark" | "Light" | "Ocean" | "Rose" | "Forest")
 		Library:Notify({Title, Content, Duration})
- 
+
 	Every window gets a permanent "Settings" tab (theme + toggle key) that always
 	sits at the bottom of the tab list. It is available as Window.SettingsTab if
 	you want to add your own items to it.
 ]]
- 
+
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
- 
+local RunService = game:GetService("RunService")
+
 local Library = {}
- 
--- How see-through the window is (0 = solid). Keep this tiny.
-local Alpha = 0.06
--- How see-through the dark screen behind the window is (1 = invisible).
-local BackdropAlpha = 0.78
- 
+
+----------------------------------------------------------------------
+-- Look & feel (tweak these)
+----------------------------------------------------------------------
+local Alpha = 0.06           -- window see-through amount (0 = solid)
+local BackdropAlpha = 0.78   -- dark screen behind the window (1 = invisible)
+local SprinkleCount = 45     -- floating specks on the background (0 = off)
+local GlowEnabled = true     -- soft accent glow + moving shine behind the window
+
 ----------------------------------------------------------------------
 -- Themes
 ----------------------------------------------------------------------
@@ -78,26 +82,26 @@ local Themes = {
 	},
 }
 local ThemeOrder = { "Dark", "Light", "Ocean", "Rose", "Forest" }
- 
+
 local Theme = {}
 for k, v in pairs(Themes.Dark) do
 	Theme[k] = v
 end
 Library.CurrentTheme = "Dark"
- 
+
 -- Live theme registry
 local bound = {}     -- { instance, property, themeKey }
 local listeners = {} -- { owner = instance, fn = function }
- 
+
 local function bind(inst, prop, key)
 	inst[prop] = Theme[key]
 	table.insert(bound, { inst, prop, key })
 end
- 
+
 local function onTheme(owner, fn)
 	table.insert(listeners, { owner = owner, fn = fn })
 end
- 
+
 function Library:SetTheme(name)
 	local t = Themes[name]
 	if not t then return end
@@ -105,7 +109,7 @@ function Library:SetTheme(name)
 		Theme[k] = v
 	end
 	Library.CurrentTheme = name
- 
+
 	for i = #bound, 1, -1 do
 		local b = bound[i]
 		if b[1]:IsDescendantOf(game) then
@@ -123,7 +127,7 @@ function Library:SetTheme(name)
 		end
 	end
 end
- 
+
 ----------------------------------------------------------------------
 -- Helpers
 ----------------------------------------------------------------------
@@ -145,26 +149,32 @@ local function create(class, props)
 	inst.Parent = parent
 	return inst
 end
- 
+
 local function corner(parent, radius)
 	return create("UICorner", { CornerRadius = UDim.new(0, radius or 10), Parent = parent })
 end
- 
-local function tween(inst, props, time)
-	TweenService:Create(inst, TweenInfo.new(time or 0.15, Enum.EasingStyle.Quad), props):Play()
+
+local function tween(inst, props, time, style, dir)
+	local t = TweenService:Create(
+		inst,
+		TweenInfo.new(time or 0.15, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out),
+		props
+	)
+	t:Play()
+	return t
 end
- 
+
 local function hover(button, target)
 	button.MouseEnter:Connect(function() tween(target, { BackgroundColor3 = Theme.ElementHover }) end)
 	button.MouseLeave:Connect(function() tween(target, { BackgroundColor3 = Theme.Element }) end)
 end
- 
+
 local function fire(callback, ...)
 	if callback then
 		task.spawn(callback, ...)
 	end
 end
- 
+
 local function newElement(page, height)
 	local frame = create("Frame", {
 		Size = UDim2.new(1, 0, 0, height or 34),
@@ -176,7 +186,7 @@ local function newElement(page, height)
 	corner(frame, 10)
 	return frame
 end
- 
+
 local function label(parent, text, size, colorKey, align)
 	return create("TextLabel", {
 		BackgroundTransparency = 1,
@@ -188,15 +198,44 @@ local function label(parent, text, size, colorKey, align)
 		Parent = parent,
 	})
 end
- 
+
+-- Where the pointer is inside a container (falls back to the center on touch devices)
+local function pointerIn(container)
+	local size = container.AbsoluteSize
+	if UserInputService.MouseEnabled then
+		local rel = UserInputService:GetMouseLocation() - container.AbsolutePosition
+		return Vector2.new(math.clamp(rel.X, 0, size.X), math.clamp(rel.Y, 0, size.Y))
+	end
+	return size / 2
+end
+
+-- Expanding circle that fades out; the container (a CanvasGroup) clips it to its rounded shape
+local function ripple(container, rel)
+	local d = math.max(container.AbsoluteSize.X, container.AbsoluteSize.Y) * 2.4
+	local circle = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromOffset(rel.X, rel.Y),
+		Size = UDim2.fromOffset(0, 0),
+		BackgroundColor3 = Theme.Accent,
+		BackgroundTransparency = 0.55,
+		BorderSizePixel = 0,
+		Parent = container,
+	})
+	create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = circle })
+	tween(circle, { Size = UDim2.fromOffset(d, d), BackgroundTransparency = 1 }, 0.55)
+	task.delay(0.6, function()
+		circle:Destroy()
+	end)
+end
+
 -- True while any keybind button is waiting for a key, so other key handlers stay quiet.
 local listeningForKey = false
- 
+
 ----------------------------------------------------------------------
--- Notifications
+-- Notifications (slide + fade in, fade out)
 ----------------------------------------------------------------------
 local notifyGui, notifyHolder
- 
+
 function Library:Notify(settings)
 	settings = settings or {}
 	if not notifyGui or not notifyGui.Parent then
@@ -217,30 +256,54 @@ function Library:Notify(settings)
 			Parent = notifyHolder,
 		})
 	end
- 
-	local card = create("Frame", {
+
+	-- The wrapper holds the layout slot; the card inside is what slides and fades
+	local wrapper = create("Frame", {
 		Size = UDim2.new(1, 0, 0, 58),
+		BackgroundTransparency = 1,
+		Parent = notifyHolder,
+	})
+	local card = create("CanvasGroup", {
+		Size = UDim2.fromScale(1, 1),
+		Position = UDim2.fromOffset(40, 0),
+		GroupTransparency = 1,
 		BackgroundTransparency = Alpha,
 		BorderSizePixel = 0,
 		Bind = { BackgroundColor3 = "Topbar" },
-		Parent = notifyHolder,
+		Parent = wrapper,
 	})
 	corner(card, 12)
+
+	local stripe = create("Frame", {
+		Size = UDim2.new(0, 3, 1, -18),
+		Position = UDim2.fromOffset(8, 9),
+		BorderSizePixel = 0,
+		Bind = { BackgroundColor3 = "Accent" },
+		Parent = card,
+	})
+	corner(stripe, 2)
+
 	local title = label(card, settings.Title or "Notification", 14)
-	title.Size = UDim2.new(1, -20, 0, 22)
-	title.Position = UDim2.fromOffset(10, 5)
+	title.Size = UDim2.new(1, -30, 0, 22)
+	title.Position = UDim2.fromOffset(20, 5)
 	title.Font = Enum.Font.GothamBold
 	local body = label(card, settings.Content or "", 12, "SubText")
-	body.Size = UDim2.new(1, -20, 0, 26)
-	body.Position = UDim2.fromOffset(10, 28)
+	body.Size = UDim2.new(1, -30, 0, 26)
+	body.Position = UDim2.fromOffset(20, 28)
 	body.TextWrapped = true
 	body.TextYAlignment = Enum.TextYAlignment.Top
- 
+
+	tween(card, { Position = UDim2.fromOffset(0, 0), GroupTransparency = 0 }, 0.4, Enum.EasingStyle.Quint)
+
 	task.delay(settings.Duration or 4, function()
-		card:Destroy()
+		if not wrapper.Parent then return end
+		local t = tween(card, { Position = UDim2.fromOffset(40, 0), GroupTransparency = 1 }, 0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		t.Completed:Connect(function()
+			wrapper:Destroy()
+		end)
 	end)
 end
- 
+
 ----------------------------------------------------------------------
 -- Window
 ----------------------------------------------------------------------
@@ -249,15 +312,15 @@ function Library:CreateWindow(settings)
 	if settings.Theme then
 		Library:SetTheme(settings.Theme)
 	end
- 
+
 	local Window = {}
 	local tabs = {}
 	local selectedTab
 	local tabCount = 0
 	local toggleKey = settings.ToggleKey or Enum.KeyCode.RightShift
-	local visible = true
+	local visible = false
 	local toggleBind
- 
+
 	local gui = create("ScreenGui", {
 		Name = settings.Name or "Window",
 		ResetOnSpawn = false,
@@ -265,29 +328,199 @@ function Library:CreateWindow(settings)
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 		Parent = Players.LocalPlayer:WaitForChild("PlayerGui"),
 	})
- 
+
 	-- Very see-through screen behind the window
 	local backdrop = create("Frame", {
 		Size = UDim2.fromScale(1, 1),
 		BackgroundColor3 = Color3.new(0, 0, 0),
-		BackgroundTransparency = BackdropAlpha,
+		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
+		Visible = false,
 		Parent = gui,
 	})
- 
+
+	-- Sprinkles floating on the background
+	local sprinkleHolder = create("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		ClipsDescendants = true,
+		Visible = false,
+		Parent = gui,
+	})
+	local sprinkles = {}
+	for i = 1, SprinkleCount do
+		local size = math.random(2, 5)
+		local fr = create("Frame", {
+			Size = UDim2.fromOffset(size, size),
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Parent = sprinkleHolder,
+		})
+		create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = fr })
+		table.insert(sprinkles, {
+			frame = fr,
+			x = math.random(),
+			y = math.random(),
+			speed = 0.008 + math.random() * 0.03,
+			drift = 0.3 + math.random() * 0.7,
+			phase = math.random() * math.pi * 2,
+			twinkle = 0.8 + math.random() * 1.8,
+			alpha = 0.3 + math.random() * 0.45,
+			accent = i % 2 == 0,
+		})
+	end
+
+	-- Holder = the thing that moves/resizes. Glow, shine and the window all live inside it.
 	local fullSize = UDim2.fromOffset(520, 340)
-	local main = create("Frame", {
+	local holder = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
 		Size = fullSize,
-		Position = UDim2.new(0.5, -260, 0.5, -170),
+		BackgroundTransparency = 1,
+		Visible = false,
+		Parent = gui,
+	})
+	local popScale = create("UIScale", { Scale = 0.9, Parent = holder })
+
+	-- Soft glow behind the window (stacked rounded frames, no image assets needed)
+	local glowLayers = {}
+	if GlowEnabled then
+		for i = 1, 7 do
+			local pad = i * 6
+			local fr = create("Frame", {
+				Size = UDim2.new(1, pad * 2, 1, pad * 2),
+				Position = UDim2.fromOffset(-pad, -pad),
+				BackgroundColor3 = Theme.Accent,
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Parent = holder,
+			})
+			corner(fr, 14 + pad)
+			table.insert(glowLayers, { frame = fr, base = 0.90 + i * 0.013 })
+		end
+	end
+
+	-- Shine: a bright spot that travels around the window's edge
+	local shine = create("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Visible = GlowEnabled,
+		Parent = holder,
+	})
+	corner(shine, 14)
+	local shineStroke = create("UIStroke", {
+		Thickness = 2,
+		Color = Color3.new(1, 1, 1),
+		Transparency = 1,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		Parent = shine,
+	})
+	local shineGradient = create("UIGradient", {
+		Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(0.3, 1),
+			NumberSequenceKeypoint.new(0.5, 0),
+			NumberSequenceKeypoint.new(0.7, 1),
+			NumberSequenceKeypoint.new(1, 1),
+		}),
+		Parent = shineStroke,
+	})
+
+	-- The window itself. A CanvasGroup lets the whole thing fade in one go.
+	local main = create("CanvasGroup", {
+		Size = UDim2.fromScale(1, 1),
 		BackgroundTransparency = Alpha,
 		BorderSizePixel = 0,
-		ClipsDescendants = true,
+		GroupTransparency = 1,
 		Bind = { BackgroundColor3 = "Background" },
-		Parent = gui,
+		Parent = holder,
 	})
 	corner(main, 14)
- 
+
+	-- Recolor the effects whenever the theme changes
+	local function recolor()
+		for _, l in ipairs(glowLayers) do
+			l.frame.BackgroundColor3 = Theme.Accent
+		end
+		shineGradient.Color = ColorSequence.new(Theme.Accent, Theme.Accent:Lerp(Color3.new(1, 1, 1), 0.65))
+		for _, s in ipairs(sprinkles) do
+			s.frame.BackgroundColor3 = s.accent and Theme.Accent or Color3.new(1, 1, 1)
+		end
+	end
+	onTheme(backdrop, recolor)
+	recolor()
+
+	----------------------------------------------------------------
+	-- Fade in / out (one 0..1 value drives everything)
+	----------------------------------------------------------------
+	local fade = Instance.new("NumberValue")
+	fade.Value = 0
+	local fadeTween
+
+	local function apply(v)
+		main.GroupTransparency = 1 - v
+		popScale.Scale = 0.9 + 0.1 * v
+		backdrop.BackgroundTransparency = 1 - (1 - BackdropAlpha) * v
+		shineStroke.Transparency = 1 - 0.85 * v
+	end
+	fade.Changed:Connect(apply)
+	apply(0)
+
+	local function fadeTo(target, time, onDone)
+		if fadeTween then fadeTween:Cancel() end
+		local fadingIn = target == 1
+		fadeTween = TweenService:Create(
+			fade,
+			TweenInfo.new(
+				time,
+				fadingIn and Enum.EasingStyle.Quint or Enum.EasingStyle.Quad,
+				fadingIn and Enum.EasingDirection.Out or Enum.EasingDirection.In
+			),
+			{ Value = target }
+		)
+		fadeTween.Completed:Connect(function(state)
+			if state == Enum.PlaybackState.Completed and onDone then
+				onDone()
+			end
+		end)
+		fadeTween:Play()
+	end
+
+	-- Per-frame animation: shine rotation, glow breathing, sprinkle drift + twinkle
+	local startTime = os.clock()
+	local frameConn = RunService.Heartbeat:Connect(function(dt)
+		local f = fade.Value
+		if f <= 0 then return end
+		local t = os.clock() - startTime
+
+		shineGradient.Rotation = (t * 80) % 360
+
+		local pulse = 0.8 + 0.2 * math.sin(t * 1.6)
+		for _, l in ipairs(glowLayers) do
+			l.frame.BackgroundTransparency = 1 - (1 - l.base) * f * pulse
+		end
+
+		for _, s in ipairs(sprinkles) do
+			s.y -= s.speed * dt
+			if s.y < -0.03 then
+				s.y = 1.03
+				s.x = math.random()
+			end
+			local px = s.x + math.sin(t * s.drift + s.phase) * 0.01
+			s.frame.Position = UDim2.fromScale(px, s.y)
+			local tw = 0.5 + 0.5 * math.sin(t * s.twinkle + s.phase)
+			s.frame.BackgroundTransparency = 1 - s.alpha * (0.3 + 0.7 * tw) * f
+		end
+	end)
+	gui.Destroying:Connect(function()
+		frameConn:Disconnect()
+		fade:Destroy()
+	end)
+
+	----------------------------------------------------------------
 	-- Topbar
+	----------------------------------------------------------------
 	local topbar = create("Frame", {
 		Size = UDim2.new(1, 0, 0, 36),
 		BackgroundTransparency = Alpha,
@@ -305,12 +538,12 @@ function Library:CreateWindow(settings)
 		Bind = { BackgroundColor3 = "Topbar" },
 		Parent = topbar,
 	})
- 
+
 	local title = label(topbar, settings.Name or "Window", 15)
 	title.Size = UDim2.new(1, -80, 1, 0)
 	title.Position = UDim2.fromOffset(16, 0)
 	title.Font = Enum.Font.GothamBold
- 
+
 	local function topButton(text, offset)
 		local b = create("TextButton", {
 			Size = UDim2.fromOffset(28, 28),
@@ -328,7 +561,7 @@ function Library:CreateWindow(settings)
 	end
 	local closeBtn = topButton("X", -36)
 	local minBtn = topButton("-", -66)
- 
+
 	-- Tab list + page container
 	local content = create("Frame", {
 		Size = UDim2.new(1, 0, 1, -36),
@@ -360,18 +593,18 @@ function Library:CreateWindow(settings)
 		BackgroundTransparency = 1,
 		Parent = content,
 	})
- 
+
 	-- Dragging
 	local dragging, dragStart, startPos
 	topbar.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			dragging, dragStart, startPos = true, input.Position, main.Position
+			dragging, dragStart, startPos = true, input.Position, holder.Position
 		end
 	end)
 	UserInputService.InputChanged:Connect(function(input)
 		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 			local d = input.Position - dragStart
-			main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+			holder.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
 		end
 	end)
 	UserInputService.InputEnded:Connect(function(input)
@@ -379,22 +612,50 @@ function Library:CreateWindow(settings)
 			dragging = false
 		end
 	end)
- 
-	-- Minimize / close
+
+	-- Minimize (keeps the top edge in place) / close (fades out first)
 	local minimized = false
+	local resizing = false
 	minBtn.MouseButton1Click:Connect(function()
+		if resizing then return end
+		resizing = true
 		minimized = not minimized
 		content.Visible = not minimized
 		filler.Visible = not minimized
-		tween(main, { Size = minimized and UDim2.fromOffset(520, 36) or fullSize }, 0.2)
+
+		local curH = holder.Size.Y.Offset
+		local newH = minimized and 36 or fullSize.Y.Offset
+		local t = tween(holder, {
+			Size = UDim2.fromOffset(fullSize.X.Offset, newH),
+			Position = holder.Position + UDim2.fromOffset(0, (newH - curH) / 2),
+		}, 0.3, Enum.EasingStyle.Quint)
+		t.Completed:Connect(function() resizing = false end)
 	end)
-	closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
- 
+	closeBtn.MouseButton1Click:Connect(function()
+		visible = false
+		fadeTo(0, 0.25, function()
+			gui:Destroy()
+		end)
+	end)
+
 	-- Show / hide + toggle key
 	function Window:SetVisible(v)
+		if v == visible then return end
 		visible = v
-		main.Visible = v
-		backdrop.Visible = v
+		if v then
+			holder.Visible = true
+			backdrop.Visible = true
+			sprinkleHolder.Visible = true
+			fadeTo(1, 0.4)
+		else
+			fadeTo(0, 0.25, function()
+				if not visible then
+					holder.Visible = false
+					backdrop.Visible = false
+					sprinkleHolder.Visible = false
+				end
+			end)
+		end
 	end
 	function Window:Toggle()
 		Window:SetVisible(not visible)
@@ -406,7 +667,7 @@ function Library:CreateWindow(settings)
 	function Window:Destroy()
 		gui:Destroy()
 	end
- 
+
 	local keyConn = UserInputService.InputBegan:Connect(function(input, processed)
 		if processed or listeningForKey then return end
 		if input.KeyCode == toggleKey then
@@ -414,13 +675,13 @@ function Library:CreateWindow(settings)
 		end
 	end)
 	gui.Destroying:Connect(function() keyConn:Disconnect() end)
- 
+
 	------------------------------------------------------------------
 	-- Tabs
 	------------------------------------------------------------------
 	function Window:CreateTab(name, _internal)
 		local Tab = {}
- 
+
 		tabCount += 1
 		local tabButton = create("TextButton", {
 			Size = UDim2.new(1, 0, 0, 32),
@@ -434,7 +695,7 @@ function Library:CreateWindow(settings)
 			Parent = tabBar,
 		})
 		corner(tabButton, 10)
- 
+
 		local page = create("ScrollingFrame", {
 			Size = UDim2.new(1, 0, 1, 0),
 			BackgroundTransparency = 1,
@@ -452,10 +713,10 @@ function Library:CreateWindow(settings)
 			PaddingRight = UDim.new(0, 10), PaddingBottom = UDim.new(0, 8),
 			Parent = page,
 		})
- 
+
 		local entry = { button = tabButton, page = page }
 		table.insert(tabs, entry)
- 
+
 		local function styleTab(e)
 			local selected = e == selectedTab
 			e.button.BackgroundTransparency = selected and Alpha or 1
@@ -475,7 +736,7 @@ function Library:CreateWindow(settings)
 		else
 			styleTab(entry)
 		end
- 
+
 		-- Label ------------------------------------------------------
 		function Tab:CreateLabel(text)
 			local f = newElement(page, 28)
@@ -484,10 +745,27 @@ function Library:CreateWindow(settings)
 			l.Position = UDim2.fromOffset(12, 0)
 			return { Set = function(_, t) l.Text = t end }
 		end
- 
-		-- Button -----------------------------------------------------
+
+		-- Button (press-in squish + ripple) --------------------------
 		function Tab:CreateButton(o)
-			local f = newElement(page)
+			-- The slot keeps the layout size; the CanvasGroup inside is what squishes
+			local slot = create("Frame", {
+				Size = UDim2.new(1, 0, 0, 34),
+				BackgroundTransparency = 1,
+				Parent = page,
+			})
+			local f = create("CanvasGroup", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.5),
+				Size = UDim2.fromScale(1, 1),
+				BackgroundTransparency = Alpha,
+				BorderSizePixel = 0,
+				Bind = { BackgroundColor3 = "Element" },
+				Parent = slot,
+			})
+			corner(f, 10)
+			local squish = create("UIScale", { Parent = f })
+
 			local b = create("TextButton", {
 				Size = UDim2.fromScale(1, 1),
 				BackgroundTransparency = 1,
@@ -498,18 +776,31 @@ function Library:CreateWindow(settings)
 				Parent = f,
 			})
 			hover(b, f)
+
+			b.MouseButton1Down:Connect(function()
+				tween(squish, { Scale = 0.96 }, 0.08)
+				ripple(f, pointerIn(f))
+			end)
+			local function release()
+				tween(squish, { Scale = 1 }, 0.3, Enum.EasingStyle.Back)
+			end
+			b.MouseButton1Up:Connect(release)
+			b.MouseLeave:Connect(release)
 			b.MouseButton1Click:Connect(function() fire(o.Callback) end)
-			return { Destroy = function() f:Destroy() end }
+
+			return { Destroy = function() slot:Destroy() end }
 		end
- 
-		-- Toggle -----------------------------------------------------
+
+		-- Toggle (knob stretch, halo pulse, row flash) ---------------
 		function Tab:CreateToggle(o)
 			local value = o.CurrentValue == true
+			local token = 0
+
 			local f = newElement(page)
 			local l = label(f, o.Name or "Toggle", 14)
 			l.Size = UDim2.new(1, -74, 1, 0)
 			l.Position = UDim2.fromOffset(12, 0)
- 
+
 			local track = create("Frame", {
 				Size = UDim2.fromOffset(38, 18),
 				Position = UDim2.new(1, -50, 0.5, -9),
@@ -528,42 +819,80 @@ function Library:CreateWindow(settings)
 			local click = create("TextButton", {
 				Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", Parent = f,
 			})
- 
-			local function paint(animate)
-				local color = value and Theme.Accent or Theme.SubText
-				local pos = value and UDim2.fromOffset(22, 2) or UDim2.fromOffset(2, 2)
-				if animate then
-					tween(track, { BackgroundColor3 = color })
-					tween(knob, { Position = pos })
-				else
-					track.BackgroundColor3 = color
-					knob.Position = pos
-				end
+
+			local function stateColor() return value and Theme.Accent or Theme.SubText end
+			local function knobX() return value and 22 or 2 end
+
+			-- Instant (no animation): initial state and theme changes
+			local function paint()
+				track.BackgroundColor3 = stateColor()
+				knob.Size = UDim2.fromOffset(14, 14)
+				knob.Position = UDim2.fromOffset(knobX(), 2)
 			end
- 
+
+			local function animate()
+				token += 1
+				local mine = token
+
+				tween(track, { BackgroundColor3 = stateColor() }, 0.2)
+
+				-- Knob stretches toward where it's going, then snaps into place with a bounce
+				tween(knob, {
+					Size = UDim2.fromOffset(20, 14),
+					Position = UDim2.fromOffset(value and 2 or 16, 2),
+				}, 0.09)
+				task.delay(0.09, function()
+					if mine ~= token then return end
+					tween(knob, {
+						Size = UDim2.fromOffset(14, 14),
+						Position = UDim2.fromOffset(knobX(), 2),
+					}, 0.28, Enum.EasingStyle.Back)
+				end)
+
+				-- Halo pulse behind the knob
+				local ring = create("Frame", {
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Position = UDim2.new(1, -50 + knobX() + 7, 0.5, 0),
+					Size = UDim2.fromOffset(14, 14),
+					BackgroundColor3 = stateColor(),
+					BackgroundTransparency = 0.4,
+					BorderSizePixel = 0,
+					ZIndex = 0,
+					Parent = f,
+				})
+				create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = ring })
+				tween(ring, { Size = UDim2.fromOffset(38, 38), BackgroundTransparency = 1 }, 0.45)
+				task.delay(0.5, function() ring:Destroy() end)
+
+				-- Quick flash of the whole row
+				f.BackgroundColor3 = Theme.ElementHover
+				tween(f, { BackgroundColor3 = Theme.Element }, 0.4)
+			end
+
 			local Toggle = {}
 			function Toggle:Set(v, silent)
+				if v == value then return end
 				value = v
-				paint(true)
+				animate()
 				if not silent then fire(o.Callback, v) end
 			end
 			click.MouseButton1Click:Connect(function() Toggle:Set(not value) end)
-			onTheme(track, function() paint(false) end)
-			paint(false)
+			onTheme(track, paint)
+			paint()
 			return Toggle
 		end
- 
+
 		-- Slider -----------------------------------------------------
 		function Tab:CreateSlider(o)
 			local min, max = o.Range and o.Range[1] or 0, o.Range and o.Range[2] or 100
 			local inc = o.Increment or 1
 			local value = o.CurrentValue or min
- 
+
 			local f = newElement(page, 52)
 			local l = label(f, "", 14)
 			l.Size = UDim2.new(1, -24, 0, 24)
 			l.Position = UDim2.fromOffset(12, 3)
- 
+
 			local bar = create("Frame", {
 				Size = UDim2.new(1, -24, 0, 8),
 				Position = UDim2.new(0, 12, 1, -18),
@@ -579,7 +908,7 @@ function Library:CreateWindow(settings)
 				Parent = bar,
 			})
 			corner(fill, 4)
- 
+
 			local Slider = {}
 			function Slider:Set(v, silent)
 				v = math.clamp(math.floor(v / inc + 0.5) * inc, min, max)
@@ -588,7 +917,7 @@ function Library:CreateWindow(settings)
 				l.Text = string.format("%s: %s%s", o.Name or "Slider", tostring(math.round(v * 100) / 100), o.Suffix and (" " .. o.Suffix) or "")
 				if not silent then fire(o.Callback, v) end
 			end
- 
+
 			local sliding = false
 			local function fromX(x)
 				local rel = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
@@ -610,18 +939,18 @@ function Library:CreateWindow(settings)
 					sliding = false
 				end
 			end)
- 
+
 			Slider:Set(value, true)
 			return Slider
 		end
- 
+
 		-- Input ------------------------------------------------------
 		function Tab:CreateInput(o)
 			local f = newElement(page)
 			local l = label(f, o.Name or "Input", 14)
 			l.Size = UDim2.new(0.5, -12, 1, 0)
 			l.Position = UDim2.fromOffset(12, 0)
- 
+
 			local box = create("TextBox", {
 				Size = UDim2.new(0.5, -20, 0, 24),
 				Position = UDim2.new(0.5, 8, 0.5, -12),
@@ -641,15 +970,15 @@ function Library:CreateWindow(settings)
 			end)
 			return { Set = function(_, t) box.Text = t end }
 		end
- 
+
 		-- Dropdown ---------------------------------------------------
 		function Tab:CreateDropdown(o)
 			local options = o.Options or {}
 			local current = o.CurrentOption or options[1]
- 
+
 			local f = newElement(page, 34)
 			f.ClipsDescendants = true
- 
+
 			local header = create("TextButton", {
 				Size = UDim2.new(1, 0, 0, 34),
 				BackgroundTransparency = 1,
@@ -662,7 +991,7 @@ function Library:CreateWindow(settings)
 			local arrow = label(header, "v", 14, "SubText", Enum.TextXAlignment.Center)
 			arrow.Size = UDim2.fromOffset(30, 34)
 			arrow.Position = UDim2.new(1, -36, 0, 0)
- 
+
 			local list = create("Frame", {
 				Size = UDim2.new(1, -12, 0, 0),
 				Position = UDim2.fromOffset(6, 38),
@@ -670,20 +999,20 @@ function Library:CreateWindow(settings)
 				Parent = f,
 			})
 			create("UIListLayout", { Padding = UDim.new(0, 3), Parent = list })
- 
+
 			local Dropdown = {}
 			local open = false
- 
+
 			local function refreshHeader()
 				l.Text = string.format("%s: %s", o.Name or "Dropdown", tostring(current))
 			end
- 
+
 			function Dropdown:Set(v, silent)
 				current = v
 				refreshHeader()
 				if not silent then fire(o.Callback, v) end
 			end
- 
+
 			local function setOpen(state)
 				open = state
 				local h = open and (38 + #options * 29 + 4) or 34
@@ -691,7 +1020,7 @@ function Library:CreateWindow(settings)
 				arrow.Text = open and "^" or "v"
 			end
 			header.MouseButton1Click:Connect(function() setOpen(not open) end)
- 
+
 			for _, opt in ipairs(options) do
 				local ob = create("TextButton", {
 					Size = UDim2.new(1, 0, 0, 26),
@@ -708,21 +1037,21 @@ function Library:CreateWindow(settings)
 					setOpen(false)
 				end)
 			end
- 
+
 			refreshHeader()
 			return Dropdown
 		end
- 
+
 		-- Keybind ----------------------------------------------------
 		-- Callback(key) fires when the bound key is pressed; Changed(key) fires when rebound.
 		function Tab:CreateKeybind(o)
 			local key = o.CurrentKeybind or Enum.KeyCode.Unknown
- 
+
 			local f = newElement(page)
 			local l = label(f, o.Name or "Keybind", 14)
 			l.Size = UDim2.new(1, -120, 1, 0)
 			l.Position = UDim2.fromOffset(12, 0)
- 
+
 			local btn = create("TextButton", {
 				Size = UDim2.fromOffset(96, 24),
 				Position = UDim2.new(1, -108, 0.5, -12),
@@ -734,14 +1063,14 @@ function Library:CreateWindow(settings)
 				Parent = f,
 			})
 			corner(btn, 8)
- 
+
 			local Keybind = {}
 			function Keybind:Set(k, silent)
 				key = k
 				btn.Text = k.Name
 				if not silent then fire(o.Changed, k) end
 			end
- 
+
 			btn.MouseButton1Click:Connect(function()
 				if listeningForKey then return end
 				listeningForKey = true
@@ -759,7 +1088,7 @@ function Library:CreateWindow(settings)
 					end
 				end)
 			end)
- 
+
 			local pressConn = UserInputService.InputBegan:Connect(function(input, processed)
 				if processed or listeningForKey then return end
 				if key ~= Enum.KeyCode.Unknown and input.KeyCode == key then
@@ -767,13 +1096,13 @@ function Library:CreateWindow(settings)
 				end
 			end)
 			f.Destroying:Connect(function() pressConn:Disconnect() end)
- 
+
 			return Keybind
 		end
- 
+
 		return Tab
 	end
- 
+
 	------------------------------------------------------------------
 	-- Permanent Settings tab
 	------------------------------------------------------------------
@@ -794,10 +1123,13 @@ function Library:CreateWindow(settings)
 		end,
 	})
 	Window.SettingsTab = SettingsTab
- 
+
+	-- Fade the window in
+	Window:SetVisible(true)
+
 	return Window
 end
- 
+
 ----------------------------------------------------------------------
 -- Put your own code here (before the return), for example:
 --
@@ -805,5 +1137,5 @@ end
 --   local Tab = Window:CreateTab("Main")
 --   Tab:CreateButton({ Name = "Click Me", Callback = function() print("hi") end })
 ----------------------------------------------------------------------
- 
+
 return Library
