@@ -2574,6 +2574,30 @@ function Library:CreateWindow(settings)
 			Window:SetInfoBar(v)
 		end,
 	})
+	-- Anti AFK: when Roblox reports the player as idle, send a fake click so it doesn't kick them
+	local antiAfkConn
+	SettingsTab:CreateToggle({
+		Name = "Anti AFK",
+		CurrentValue = false,
+		Callback = function(v)
+			if antiAfkConn then
+				antiAfkConn:Disconnect()
+				antiAfkConn = nil
+			end
+			if v then
+				antiAfkConn = Players.LocalPlayer.Idled:Connect(function()
+					local ok, err = pcall(function()
+						local vu = game:GetService("VirtualUser")
+						vu:CaptureController()
+						vu:ClickButton2(Vector2.new(0, 0))
+					end)
+					if not ok then
+						warn("[GuiLibrary] Anti AFK failed: " .. tostring(err))
+					end
+				end)
+			end
+		end,
+	})
 	if not saveEnabled then
 		SettingsTab:CreateLabel("Autosave: off")
 	elseif not hasFiles then
