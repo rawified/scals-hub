@@ -2686,10 +2686,12 @@ end
 --		OnRefresh = function() end,        -- refresh icon, top right
 --		OnStreamerMode = function(on) end,
 --		OnClose = function() end,
+--		OnShown = function() end,         -- fired once the loader is visible (after the splash)
 --		Key = {                            -- optional key page
 --			GetKeyLink = "https://...",    -- copied by "Get Key"
 --			Check = function(key) return true end, -- return true, or false + reason
 --			OnSuccess = function(key) end, -- after a valid key (the main page is shown first)
+--			OnResetKey = function() end,   -- "Change key" link pressed twice: forget the saved key
 --		},
 --	})
 --	Loader:SetInfo("Version", "V1.0.1")   Loader:SetStatus(text, color)
@@ -3514,6 +3516,54 @@ function Library:CreateLoader(settings)
 		if message then Loader:SetKeyStatus(message, true) end
 	end
 
+	-- "Change key" link under the big button (only when there's a key page).
+	-- First click arms it, a second click within 3 seconds resets: the saved key is
+	-- forgotten (OnResetKey) and the key page opens with an empty box.
+	if settings.Key then
+		local resetBtn = create("TextButton", {
+			AnchorPoint = Vector2.new(0.5, 0),
+			Position = UDim2.new(0.5, 0, 0, btnY + 56 + 7),
+			Size = UDim2.fromOffset(220, 18),
+			BackgroundTransparency = 1,
+			AutoButtonColor = false,
+			Text = "CHANGE KEY",
+			FontFace = F.Mono,
+			TextSize = 11,
+			Bind = { TextColor3 = "SubText" },
+			Parent = mainPage,
+		})
+		local armed, armToken = false, 0
+		local function disarm()
+			armed = false
+			resetBtn.Text = "CHANGE KEY"
+			tween(resetBtn, { TextColor3 = Theme.SubText }, 0.15)
+		end
+		resetBtn.MouseEnter:Connect(function()
+			if not armed then tween(resetBtn, { TextColor3 = Theme.Text }, 0.15) end
+		end)
+		resetBtn.MouseLeave:Connect(function()
+			if not armed then tween(resetBtn, { TextColor3 = Theme.SubText }, 0.15) end
+		end)
+		resetBtn.MouseButton1Click:Connect(function()
+			if not armed then
+				armed = true
+				armToken += 1
+				local mine = armToken
+				resetBtn.Text = "CLICK AGAIN TO RESET YOUR KEY"
+				tween(resetBtn, { TextColor3 = Color3.fromRGB(240, 95, 95) }, 0.15)
+				task.delay(3, function()
+					if armed and mine == armToken then disarm() end
+				end)
+				return
+			end
+			disarm()
+			keyBox.Text = ""
+			Loader:ShowKey()
+			Loader:SetKeyStatus("Key removed. Enter a new one.")
+			fire(kcfg.OnResetKey)
+		end)
+	end
+
 	local checking = false
 	local function checkNow()
 		if checking then return end
@@ -3646,6 +3696,7 @@ function Library:CreateLoader(settings)
 	local function reveal()
 		if gui.Parent then
 			tween(shown, { Value = 1 }, 0.45, Enum.EasingStyle.Quint)
+			fire(settings.OnShown) -- the loader is on screen (after the splash, if any)
 		end
 	end
 	if type(settings.Splash) == "table" then
