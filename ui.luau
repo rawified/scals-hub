@@ -1845,10 +1845,22 @@ function Library:CreateWindow(settings)
 		gui:Destroy()
 	end
 
+	-- Hotkeys for buttons and toggles (right-click an element to set one)
+	local keyBinds = {}
 	local keyConn = UserInputService.InputBegan:Connect(function(input, processed)
 		if processed or listeningForKey or splashActive then return end
 		if input.KeyCode == toggleKey then
 			Window:Toggle()
+		end
+		if input.KeyCode ~= Enum.KeyCode.Unknown then
+			for i = #keyBinds, 1, -1 do
+				local b = keyBinds[i]
+				if not b.inst:IsDescendantOf(game) then
+					table.remove(keyBinds, i)
+				elseif b.key == input.KeyCode then
+					task.spawn(b.action)
+				end
+			end
 		end
 	end)
 	gui.Destroying:Connect(function() keyConn:Disconnect() end)
@@ -1862,6 +1874,74 @@ function Library:CreateWindow(settings)
 		-- Save key for an element: explicit Flag, or "<Tab>/<Element name>"
 		local function flagOf(o, fallback)
 			return o.Flag or (name .. "/" .. (o.Name or fallback))
+		end
+
+		-- Hotkey support for buttons/toggles: RIGHT-CLICK the element, then press a key.
+		-- Escape cancels, Backspace/Delete clears. Also settable with Bind = Enum.KeyCode.X
+		-- in the element options, or element:SetBind(Enum.KeyCode.X / nil).
+		local function attachBind(o, flag, target, parent, chipRight, action)
+			local bindFlag = flag .. "/Bind"
+			local key = Enum.KeyCode.Unknown
+			if type(flags[bindFlag]) == "string" then
+				if flags[bindFlag] ~= "" then
+					local ok, saved = pcall(function() return Enum.KeyCode[flags[bindFlag]] end)
+					if ok and saved then key = saved end
+				end
+			elseif typeof(o.Bind) == "EnumItem" then
+				key = o.Bind
+			end
+
+			local chip = create("TextLabel", {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -chipRight, 0.5, 0),
+				Size = UDim2.fromOffset(0, 18),
+				AutomaticSize = Enum.AutomaticSize.X,
+				BackgroundTransparency = 0.55,
+				BorderSizePixel = 0,
+				Text = key.Name,
+				FontRole = "Heading",
+				TextSize = 11,
+				Visible = key ~= Enum.KeyCode.Unknown,
+				ZIndex = 5,
+				Bind = { BackgroundColor3 = "Stroke", TextColor3 = "SubText" },
+				Parent = parent,
+			})
+			corner(chip, 5)
+			create("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), Parent = chip })
+
+			local entry = { key = key, action = action, inst = chip }
+			table.insert(keyBinds, entry)
+
+			local api = {}
+			local function setKey(k)
+				key = k or Enum.KeyCode.Unknown
+				entry.key = key
+				chip.Text = key.Name
+				chip.Visible = key ~= Enum.KeyCode.Unknown
+				changed(bindFlag, key == Enum.KeyCode.Unknown and "" or key.Name)
+			end
+			api.Set = setKey
+
+			target.MouseButton2Click:Connect(function()
+				if listeningForKey then return end
+				listeningForKey = true
+				chip.Text = "press a key..."
+				chip.Visible = true
+				local conn
+				conn = UserInputService.InputBegan:Connect(function(input)
+					if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+					conn:Disconnect()
+					task.defer(function() listeningForKey = false end)
+					if input.KeyCode == Enum.KeyCode.Escape then
+						setKey(key) -- cancel: restore the label
+					elseif input.KeyCode == Enum.KeyCode.Backspace or input.KeyCode == Enum.KeyCode.Delete then
+						setKey(nil)
+					else
+						setKey(input.KeyCode)
+					end
+				end)
+			end)
+			return api
 		end
 
 		tabCount += 1
@@ -1995,7 +2075,14 @@ function Library:CreateWindow(settings)
 			b.MouseLeave:Connect(release)
 			b.MouseButton1Click:Connect(function() fire(o.Callback) end)
 
-			return { Destroy = function() slot:Destroy() end }
+			local Button = { Destroy = function() slot:Destroy() end }
+			local bind = attachBind(o, flagOf(o, "Button"), b, f, 10, function()
+				tween(squish, { Scale = 0.96 }, 0.08)
+				task.delay(0.1, function() tween(squish, { Scale = 1 }, 0.3, Enum.EasingStyle.Back) end)
+				fire(o.Callback)
+			end)
+			Button.SetBind = function(_, k) bind.Set(k) end
+			return Button
 		end
 
 		-- Toggle (knob stretch, halo pulse, row flash, optional Loop) -
@@ -2121,6 +2208,8 @@ function Library:CreateWindow(settings)
 			end
 
 			click.MouseButton1Click:Connect(function() Toggle:Set(not value) end)
+			local bind = attachBind(o, flag, click, f, 58, function() Toggle:Set(not value) end)
+			Toggle.SetBind = function(_, k) bind.Set(k) end
 			onTheme(track, paint)
 			paint()
 
