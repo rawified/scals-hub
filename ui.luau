@@ -2641,8 +2641,15 @@ function Library:CreateWindow(settings)
 	settingsEntry = SettingsTab._entry
 	refreshGear()
 
-	-- Startup screen, then fade the window in
+	-- Startup screen, then fade the window in.
+	-- A loader that already played the splash sets getgenv().GuiLibrarySplashShown, so a
+	-- script it loads doesn't play it a second time (the flag is used once, then cleared).
 	local splashOpts = settings.Splash
+	local genv = typeof(getgenv) == "function" and getgenv() or nil
+	if genv and genv.GuiLibrarySplashShown then
+		genv.GuiLibrarySplashShown = nil
+		splashOpts = false
+	end
 	if splashOpts == false then
 		Window:SetVisible(true)
 	else
@@ -2663,6 +2670,8 @@ end
 --		Name = "Scals Hub",
 --		Theme = "Monochrome",
 --		Accent = Color3.fromRGB(52, 199, 123),   -- optional, defaults to the theme accent
+--		Splash = { Image = "rbxassetid://123", Duration = 3.5, Subtitle = "loader" }, -- optional, same splash as CreateWindow
+--		Font = nil,                        -- optional font family; default uses the library's current font preset
 --		Footer = "gg/v4nta",
 --		Status = { Text = "Working / Undetected", Color = Color3.fromRGB(52, 199, 123) },
 --		Info = { { "Last Updated", "6/11/26" }, { "Version", "V1.0.0" }, { "Type", "Premium" } },
@@ -2706,13 +2715,27 @@ function Library:CreateLoader(settings)
 	local player = Players.LocalPlayer
 	local GuiService = game:GetService("GuiService")
 
-	-- Montserrat by default (close to the reference look); pass Font = "rbxasset://fonts/families/GothamSSm.json" etc. to change it
-	local family = settings.Font or "rbxasset://fonts/families/Montserrat.json"
-	local F = {
-		Regular = Font.new(family, Enum.FontWeight.Regular),
-		Medium = Font.new(family, Enum.FontWeight.Medium),
-		Bold = Font.new(family, Enum.FontWeight.Bold),
-	}
+	-- Same fonts as the main window (current Library:SetFont preset): Title for the big
+	-- uppercase name, Heading for values/buttons, Body for labels, Light for inputs, Mono for tags.
+	-- Pass Font = "rbxasset://fonts/families/<Family>.json" to use one family for everything instead.
+	local F
+	if settings.Font then
+		F = {
+			Title = Font.new(settings.Font, Enum.FontWeight.Bold),
+			Bold = Font.new(settings.Font, Enum.FontWeight.Bold),
+			Medium = Font.new(settings.Font, Enum.FontWeight.Medium),
+			Regular = Font.new(settings.Font, Enum.FontWeight.Regular),
+			Mono = Font.fromEnum(Fonts.Mono),
+		}
+	else
+		F = {
+			Title = Font.fromEnum(Fonts.Title),
+			Bold = Font.fromEnum(Fonts.Heading),
+			Medium = Font.fromEnum(Fonts.Body),
+			Regular = Font.fromEnum(Fonts.Light),
+			Mono = Font.fromEnum(Fonts.Mono),
+		}
+	end
 
 	-- Everything that depends on the accent repaints itself when the theme changes
 	local painters = {}
@@ -2776,7 +2799,7 @@ function Library:CreateLoader(settings)
 	})
 	local scale = create("UIScale", { Scale = 0.92, Parent = holder })
 	-- Accent glow + travelling shine around the window (created first so it sits behind)
-	local winGlow = makeGlow(holder, 6, 18, 0)
+	local winGlow = makeGlow(holder, 6, 14, 0)
 	local main = create("CanvasGroup", {
 		Size = UDim2.fromScale(1, 1),
 		GroupTransparency = 1,
@@ -2785,7 +2808,7 @@ function Library:CreateLoader(settings)
 		Bind = { BackgroundColor3 = "Background" },
 		Parent = holder,
 	})
-	corner(main, 18)
+	corner(main, 14)
 
 	-- Soft highlight across the top of the window, like the main window
 	local sheen = create("Frame", {
@@ -2846,8 +2869,8 @@ function Library:CreateLoader(settings)
 			Bind = { BackgroundColor3 = "Element" },
 			Parent = parent,
 		})
-		corner(f, 16)
-		hairline(f, 16)
+		corner(f, 10)
+		hairline(f, 10)
 		return f
 	end
 
@@ -2881,7 +2904,7 @@ function Library:CreateLoader(settings)
 			BorderSizePixel = 0,
 			Parent = slot,
 		})
-		corner(face, 16)
+		corner(face, 10)
 		local squish = create("UIScale", { Parent = face })
 		if primary then
 			-- light band sweeping across, like the slider fill in the main window
@@ -2907,15 +2930,15 @@ function Library:CreateLoader(settings)
 			end)
 		else
 			face.BackgroundTransparency = Alpha
-			hairline(face, 16)
+			hairline(face, 10)
 		end
 		local b = create("TextButton", {
 			Size = UDim2.fromScale(1, 1),
 			BackgroundTransparency = 1,
 			AutoButtonColor = false,
-			Text = label_,
-			FontFace = F.Medium,
-			TextSize = primary and 18 or 16,
+			Text = string.upper(label_),       -- uppercase, like the hub's titles
+			FontFace = F.Bold,
+			TextSize = primary and 16 or 14,
 			Parent = face,
 		})
 		local hovering = false
@@ -2950,6 +2973,15 @@ function Library:CreateLoader(settings)
 	-- Left: avatar, names, status, footer
 	------------------------------------------------------------------
 	local left = create("Frame", { Size = UDim2.new(0, LEFT, 1, 0), BackgroundTransparency = 1, Parent = main })
+	-- Hairline between the profile column and the rest, like the main window's sidebar divider
+	create("Frame", {
+		Position = UDim2.fromOffset(LEFT, 28),
+		Size = UDim2.new(0, 1, 1, -56),
+		BackgroundTransparency = 0.5,
+		BorderSizePixel = 0,
+		Bind = { BackgroundColor3 = "Stroke" },
+		Parent = main,
+	})
 
 	-- Avatar sits in a wrapper so a soft accent glow can pulse behind it
 	local avatarWrap = create("Frame", {
@@ -2984,17 +3016,17 @@ function Library:CreateLoader(settings)
 		Position = UDim2.new(0, 16, 0, 190),
 		Size = UDim2.new(1, -32, 0, 26),
 		TextXAlignment = Enum.TextXAlignment.Center,
-		FontFace = F.Bold,
-		TextSize = 21,
-		Text = player.DisplayName,
+		FontFace = F.Title,
+		TextSize = 24,
+		Text = string.upper(player.DisplayName),
 		Bind = { TextColor3 = "Text" },
 	})
 	local userLabel = text(left, {
 		Position = UDim2.new(0, 16, 0, 218),
 		Size = UDim2.new(1, -32, 0, 20),
 		TextXAlignment = Enum.TextXAlignment.Center,
-		FontFace = F.Regular,
-		TextSize = 15,
+		FontFace = F.Mono,
+		TextSize = 13,
 		Text = "@" .. player.Name,
 		Bind = { TextColor3 = "SubText" },
 	})
@@ -3009,8 +3041,8 @@ function Library:CreateLoader(settings)
 		Position = UDim2.fromOffset(6, 0),
 		Size = UDim2.fromScale(1, 1),
 		TextXAlignment = Enum.TextXAlignment.Center,
-		FontFace = F.Regular,
-		TextSize = 14,
+		FontFace = F.Mono,
+		TextSize = 12,
 		Text = "",
 		Bind = { TextColor3 = "SubText" },
 	})
@@ -3027,7 +3059,7 @@ function Library:CreateLoader(settings)
 	end
 	statusText:GetPropertyChangedSignal("TextBounds"):Connect(placeDot)
 	function Loader:SetStatus(t, color)
-		statusText.Text = t or ""
+		statusText.Text = string.upper(t or "")
 		statusColor = color
 		statusDot.BackgroundColor3 = color or accent()
 		statusDot.Visible = (t or "") ~= ""
@@ -3044,10 +3076,10 @@ function Library:CreateLoader(settings)
 		Position = UDim2.new(0, 16, 1, -26),
 		Size = UDim2.new(1, -32, 0, 16),
 		TextXAlignment = Enum.TextXAlignment.Center,
-		FontFace = F.Regular,
-		TextSize = 12,
+		FontFace = F.Mono,
+		TextSize = 11,
 		TextTransparency = 0.4,
-		Text = settings.Footer or "",
+		Text = string.upper(settings.Footer or ""),
 		Bind = { TextColor3 = "SubText" },
 	})
 
@@ -3055,7 +3087,7 @@ function Library:CreateLoader(settings)
 	local avatarImage = ""
 	local streamer = settings.StreamerMode == true
 	local function applyStreamer()
-		nameLabel.Text = streamer and "Hidden" or player.DisplayName
+		nameLabel.Text = streamer and "HIDDEN" or string.upper(player.DisplayName)
 		userLabel.Text = streamer and "@hidden" or ("@" .. player.Name)
 		avatar.Image = streamer and "" or avatarImage
 		hiddenMark.Visible = streamer
@@ -3079,12 +3111,22 @@ function Library:CreateLoader(settings)
 		BackgroundTransparency = 1,
 		Parent = main,
 	})
+	-- Accent dot + uppercase title, like the main window's topbar
+	local titleDot = create("Frame", {
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.fromOffset(2, 41),
+		Size = UDim2.fromOffset(8, 8),
+		BorderSizePixel = 0,
+		Parent = right,
+	})
+	create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = titleDot })
+	paint(function() titleDot.BackgroundColor3 = accent() end)
 	local titleLabel = text(right, {
-		Position = UDim2.fromOffset(0, 24),
-		Size = UDim2.new(1, -96, 0, 34),
-		FontFace = F.Bold,
-		TextSize = 27,
-		Text = settings.Name or "Loader",
+		Position = UDim2.fromOffset(20, 22),
+		Size = UDim2.new(1, -116, 0, 38),
+		FontFace = F.Title,
+		TextSize = 32,
+		Text = string.upper(settings.Name or "Loader"),
 		Bind = { TextColor3 = "Text" },
 	})
 	-- faint accent outline on the title gives it the same soft glow as the main window's title
@@ -3113,7 +3155,7 @@ function Library:CreateLoader(settings)
 		b.MouseLeave:Connect(function() tween(b, { TextColor3 = Theme.SubText }) end)
 		return b
 	end
-	local closeBtn = iconButton("×", 0, 30)
+	local closeBtn = iconButton("X", 0, 18)
 	local refreshBtn = iconButton("↻", -46, 24)
 
 	------------------------------------------------------------------
@@ -3130,9 +3172,9 @@ function Library:CreateLoader(settings)
 		text(infoCard, {
 			Position = UDim2.fromOffset(20, y),
 			Size = UDim2.new(0.5, -20, 0, rowH),
-			FontFace = F.Regular,
-			TextSize = 15,
-			Text = tostring(row[1]),
+			FontFace = F.Mono,
+			TextSize = 12,
+			Text = string.upper(tostring(row[1])),
 			Bind = { TextColor3 = "SubText" },
 		})
 		infoValues[row[1]] = text(infoCard, {
@@ -3221,9 +3263,9 @@ function Library:CreateLoader(settings)
 	text(ddCard, {
 		Position = UDim2.fromOffset(20, 9),
 		Size = UDim2.new(1, -56, 0, 14),
-		FontFace = F.Regular,
-		TextSize = 12,
-		Text = settings.DropdownName or "Script",
+		FontFace = F.Mono,
+		TextSize = 11,
+		Text = string.upper(settings.DropdownName or "Script"),
 		Bind = { TextColor3 = "SubText" },
 	})
 	local ddValue = text(ddCard, {
@@ -3259,7 +3301,7 @@ function Library:CreateLoader(settings)
 		Bind = { BackgroundColor3 = "Element", ScrollBarImageColor3 = "SubText" },
 		Parent = mainPage,
 	})
-	corner(list, 14)
+	corner(list, 10)
 	create("UIStroke", {
 		Thickness = 1,
 		Transparency = 0.4,
@@ -3326,7 +3368,7 @@ function Library:CreateLoader(settings)
 				Bind = { BackgroundColor3 = "ElementHover" },
 				Parent = list,
 			})
-			corner(b, 10)
+			corner(b, 8)
 			create("UIPadding", { PaddingLeft = UDim.new(0, 14), Parent = b })
 			b.MouseEnter:Connect(function() tween(b, { BackgroundTransparency = 0 }, 0.12) end)
 			b.MouseLeave:Connect(function() tween(b, { BackgroundTransparency = 1 }, 0.12) end)
@@ -3376,7 +3418,7 @@ function Library:CreateLoader(settings)
 		fire(settings.OnLoad, current)
 	end)
 	function Loader:SetButton(t)
-		loadBtn.button.Text = t
+		loadBtn.button.Text = string.upper(t)
 	end
 
 	------------------------------------------------------------------
@@ -3389,9 +3431,9 @@ function Library:CreateLoader(settings)
 	text(keyCard, {
 		Position = UDim2.fromOffset(20, 16),
 		Size = UDim2.new(1, -40, 0, 20),
-		FontFace = F.Bold,
-		TextSize = 16,
-		Text = kcfg.Title or "Key System",
+		FontFace = F.Title,
+		TextSize = 20,
+		Text = string.upper(kcfg.Title or "Key System"),
 		Bind = { TextColor3 = "Text" },
 	})
 	text(keyCard, {
@@ -3410,7 +3452,7 @@ function Library:CreateLoader(settings)
 		Bind = { BackgroundColor3 = "Background" },
 		Parent = keyCard,
 	})
-	corner(boxFrame, 12)
+	corner(boxFrame, 8)
 	local boxStroke = create("UIStroke", {
 		Thickness = 1,
 		Transparency = 0.4,
@@ -3487,12 +3529,12 @@ function Library:CreateLoader(settings)
 			return
 		end
 		checking = true
-		checkBtn.button.Text = "Checking..."
+		checkBtn.button.Text = "CHECKING..."
 		task.spawn(function()
 			local ok, valid, reason = pcall(kcfg.Check, key)
 			checking = false
 			if not gui.Parent then return end
-			checkBtn.button.Text = kcfg.CheckText or "Check Key"
+			checkBtn.button.Text = string.upper(kcfg.CheckText or "Check Key")
 			if ok and valid then
 				Loader:SetKeyStatus("")
 				Loader:ShowMain()
@@ -3526,7 +3568,7 @@ function Library:CreateLoader(settings)
 	end)
 
 	-- Window outline (last, so it sits on top of everything)
-	hairline(main, 18, 0.3)
+	hairline(main, 14, 0.3)
 
 	------------------------------------------------------------------
 	-- Effects: glow, shine, sprinkles, shimmer (every frame while visible)
@@ -3579,6 +3621,9 @@ function Library:CreateLoader(settings)
 		if gui.Parent then gui:Destroy() end
 	end
 	function Loader:Close()
+		-- closed without loading anything: let the next window play its splash again
+		local genv = typeof(getgenv) == "function" and getgenv() or nil
+		if genv then genv.GuiLibrarySplashShown = nil end
 		local t = tween(shown, { Value = 0 }, 0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 		t.Completed:Connect(function() Loader:Destroy() end)
 	end
@@ -3595,9 +3640,21 @@ function Library:CreateLoader(settings)
 		shown:Destroy()
 	end)
 
-	-- Show
+	-- Show: optional splash first (same one as CreateWindow), then fade the loader in.
+	-- The splash is marked as shown so the script the loader starts skips its own.
 	showPage(settings.StartPage or (settings.Key and "Key" or "Main"))
-	tween(shown, { Value = 1 }, 0.45, Enum.EasingStyle.Quint)
+	local function reveal()
+		if gui.Parent then
+			tween(shown, { Value = 1 }, 0.45, Enum.EasingStyle.Quint)
+		end
+	end
+	if type(settings.Splash) == "table" then
+		local genv = typeof(getgenv) == "function" and getgenv() or nil
+		if genv then genv.GuiLibrarySplashShown = true end
+		playSplash(settings.Splash, settings.Name, reveal)
+	else
+		reveal()
+	end
 
 	Loader.Gui = gui
 	return Loader
