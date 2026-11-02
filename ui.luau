@@ -47,8 +47,10 @@
 	HOTKEYS: right-click any button or toggle, then press a key (Escape cancels, Backspace clears).
 	Options: Bind = Enum.KeyCode.X, element:SetBind(KeyCode or nil).
 
-	USER PANEL: bottom-left avatar / name / "Premium" or "Regular". Premium (Roblox Premium, or
-	Premium = true in CreateWindow, or Window:SetPremium(bool)) gives the name a theme-coloured shimmer.
+	USER PANEL: bottom-left avatar / name / "Premium" or "Regular". Premium gives the name a
+	theme-coloured shimmer. The library knows nothing about key services: the loader that checked the
+	key sets  getgenv().GuiLibraryUser = { Premium = true/false, Tier = "Premium" }  (and
+	getgenv().SCRIPT_KEY = key). Premium = true in CreateWindow or Window:SetPremium(bool) override it.
 
 	AUTOSAVE: every element's value is saved to a JSON file whenever it changes and is
 	restored (callbacks included) the next time the script runs. Without a Flag, the save
@@ -1831,14 +1833,18 @@ function Library:CreateWindow(settings)
 	-- or call Window:SetPremium(bool) later.
 	----------------------------------------------------------------
 	local player = Players.LocalPlayer
-	local isPremium = false
-	do
-		local ok, m = pcall(function() return player.MembershipType == Enum.MembershipType.Premium end)
-		isPremium = ok and m or false
+	-- The library never talks to a key service itself. The loader that validated the key leaves the
+	-- result in the executor environment as getgenv().GuiLibraryUser = { Premium = bool, Tier = "..." }
+	-- (and the key itself in getgenv().SCRIPT_KEY); this just reads it.
+	local function detectPremium()
+		local genv = (typeof(getgenv) == "function" and getgenv()) or _G
+		local u = genv.GuiLibraryUser
+		if type(u) ~= "table" then return false end
+		if u.Premium == true then return true end
+		return type(u.Tier) == "string" and string.find(string.lower(u.Tier), "premium", 1, true) ~= nil
 	end
-	if type(settings.Premium) == "boolean" then
-		isPremium = settings.Premium
-	end
+	local premiumLocked = type(settings.Premium) == "boolean" -- explicit choice beats the environment
+	local isPremium = premiumLocked and settings.Premium or detectPremium()
 
 	local userPanel = create("Frame", {
 		Size = UDim2.new(0, 120, 0, 44),
@@ -1954,10 +1960,20 @@ function Library:CreateWindow(settings)
 
 	-- Shimmer sweeping across a premium name, plus a slow glow pulse
 	local nameConn
+	local lastCheck = 0
 	nameConn = RunService.Heartbeat:Connect(function()
 		if not userPanel:IsDescendantOf(game) then
 			nameConn:Disconnect()
 			return
+		end
+		-- pick up a key that was validated / changed after this window opened
+		if not premiumLocked and os.clock() - lastCheck > 1 then
+			lastCheck = os.clock()
+			local now = detectPremium()
+			if now ~= isPremium then
+				isPremium = now
+				paintUser()
+			end
 		end
 		if isPremium then
 			local t = os.clock()
@@ -1967,6 +1983,7 @@ function Library:CreateWindow(settings)
 	end)
 
 	function Window:SetPremium(v)
+		premiumLocked = true
 		isPremium = v == true
 		paintUser()
 	end
