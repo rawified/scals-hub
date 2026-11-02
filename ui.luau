@@ -387,6 +387,121 @@ end
 local listeningForKey = false
 
 ----------------------------------------------------------------------
+-- Shared effects (used by CreateWindow and CreateLoader)
+----------------------------------------------------------------------
+-- Soft glow behind something (stacked rounded frames, no image assets needed)
+-- plus a "shine": a bright spot that travels around its edge.
+local function makeGlow(parent, step, radius, phase)
+	local store = { layers = {}, phase = phase }
+	if not GlowEnabled then return store end
+	for i = 1, 7 do
+		local pad = i * step
+		local fr = create("Frame", {
+			Size = UDim2.new(1, pad * 2, 1, pad * 2),
+			Position = UDim2.fromOffset(-pad, -pad),
+			BackgroundColor3 = Theme.Accent,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Parent = parent,
+		})
+		corner(fr, radius + pad)
+		table.insert(store.layers, { frame = fr, base = 0.90 + i * 0.013 })
+	end
+	local shine = create("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Parent = parent,
+	})
+	corner(shine, radius)
+	store.stroke = create("UIStroke", {
+		Thickness = 2,
+		Color = Color3.new(1, 1, 1),
+		Transparency = 1,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		Parent = shine,
+	})
+	store.gradient = create("UIGradient", {
+		Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(0.3, 1),
+			NumberSequenceKeypoint.new(0.5, 0),
+			NumberSequenceKeypoint.new(0.7, 1),
+			NumberSequenceKeypoint.new(1, 1),
+		}),
+		Parent = store.stroke,
+	})
+	return store
+end
+-- k = how visible the whole effect is (0..1), t = time
+local function animateGlow(store, k, t)
+	local pulse = 0.8 + 0.2 * math.sin(t * 1.6 + store.phase)
+	for _, l in ipairs(store.layers) do
+		l.frame.BackgroundTransparency = 1 - (1 - l.base) * k * pulse
+	end
+	if store.stroke then
+		store.stroke.Transparency = 1 - 0.85 * k
+		store.gradient.Rotation = (t * 80 + store.phase * 60) % 360
+	end
+end
+local function recolorGlow(store, color)
+	color = color or Theme.Accent
+	for _, l in ipairs(store.layers) do
+		l.frame.BackgroundColor3 = color
+	end
+	if store.gradient then
+		store.gradient.Color = ColorSequence.new(color, color:Lerp(Color3.new(1, 1, 1), 0.65))
+	end
+end
+
+-- Floating specks over the dark backdrop
+local function makeSprinkles(parent, count)
+	local list = {}
+	for i = 1, count do
+		local size = math.random(2, 6)
+		local fr = create("Frame", {
+			Size = UDim2.fromOffset(size, size),
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Parent = parent,
+		})
+		create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = fr })
+		table.insert(list, {
+			frame = fr,
+			x = math.random(),
+			y = math.random(),
+			speed = 0.008 + math.random() * 0.03,
+			drift = 0.3 + math.random() * 0.7,
+			phase = math.random() * math.pi * 2,
+			twinkle = 0.8 + math.random() * 1.8,
+			alpha = 0.35 + math.random() * 0.5,
+			accent = i % 2 == 0,
+		})
+	end
+	return list
+end
+-- f = how visible (0..1)
+local function animateSprinkles(list, dt, t, f)
+	for _, s in ipairs(list) do
+		s.y -= s.speed * dt
+		if s.y < -0.03 then
+			s.y = 1.03
+			s.x = math.random()
+		end
+		local px = s.x + math.sin(t * s.drift + s.phase) * 0.01
+		s.frame.Position = UDim2.fromScale(px, s.y)
+		local tw = 0.5 + 0.5 * math.sin(t * s.twinkle + s.phase)
+		s.frame.BackgroundTransparency = 1 - s.alpha * (0.3 + 0.7 * tw) * f
+	end
+end
+local function recolorSprinkles(list, color)
+	color = color or Theme.Accent
+	for _, s in ipairs(list) do
+		s.frame.BackgroundColor3 = s.accent and color or Color3.new(1, 1, 1)
+	end
+end
+
+----------------------------------------------------------------------
 -- Notifications (slide + fade in, fade out)
 ----------------------------------------------------------------------
 local notifyGui, notifyHolder
@@ -1239,69 +1354,6 @@ function Library:CreateWindow(settings)
 		Parent = gui,
 	})
 	local popScale = create("UIScale", { Scale = 0.9, Parent = holder })
-
-	-- Soft glow behind something (stacked rounded frames, no image assets needed)
-	-- plus a "shine": a bright spot that travels around its edge.
-	local function makeGlow(parent, step, radius, phase)
-		local store = { layers = {}, phase = phase }
-		if not GlowEnabled then return store end
-		for i = 1, 7 do
-			local pad = i * step
-			local fr = create("Frame", {
-				Size = UDim2.new(1, pad * 2, 1, pad * 2),
-				Position = UDim2.fromOffset(-pad, -pad),
-				BackgroundColor3 = Theme.Accent,
-				BackgroundTransparency = 1,
-				BorderSizePixel = 0,
-				Parent = parent,
-			})
-			corner(fr, radius + pad)
-			table.insert(store.layers, { frame = fr, base = 0.90 + i * 0.013 })
-		end
-		local shine = create("Frame", {
-			Size = UDim2.fromScale(1, 1),
-			BackgroundTransparency = 1,
-			Parent = parent,
-		})
-		corner(shine, radius)
-		store.stroke = create("UIStroke", {
-			Thickness = 2,
-			Color = Color3.new(1, 1, 1),
-			Transparency = 1,
-			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-			Parent = shine,
-		})
-		store.gradient = create("UIGradient", {
-			Transparency = NumberSequence.new({
-				NumberSequenceKeypoint.new(0, 1),
-				NumberSequenceKeypoint.new(0.3, 1),
-				NumberSequenceKeypoint.new(0.5, 0),
-				NumberSequenceKeypoint.new(0.7, 1),
-				NumberSequenceKeypoint.new(1, 1),
-			}),
-			Parent = store.stroke,
-		})
-		return store
-	end
-	-- k = how visible the whole effect is (0..1), t = time
-	local function animateGlow(store, k, t)
-		local pulse = 0.8 + 0.2 * math.sin(t * 1.6 + store.phase)
-		for _, l in ipairs(store.layers) do
-			l.frame.BackgroundTransparency = 1 - (1 - l.base) * k * pulse
-		end
-		if store.stroke then
-			store.stroke.Transparency = 1 - 0.85 * k
-			store.gradient.Rotation = (t * 80 + store.phase * 60) % 360
-		end
-	end
-	local function recolorGlow(store)
-		for _, l in ipairs(store.layers) do
-			l.frame.BackgroundColor3 = Theme.Accent
-		end
-		if store.gradient then
-			store.gradient.Color = ColorSequence.new(Theme.Accent, Theme.Accent:Lerp(Color3.new(1, 1, 1), 0.65))
-		end
-	end
 
 	local winGlow = makeGlow(holder, 6, 14, 0)
 
@@ -2706,6 +2758,15 @@ function Library:CreateLoader(settings)
 		BorderSizePixel = 0,
 		Parent = gui,
 	})
+	-- Floating specks on the backdrop (same as the main window)
+	local sprinkleHolder = create("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		ClipsDescendants = true,
+		Parent = gui,
+	})
+	local sprinkles = makeSprinkles(sprinkleHolder, SprinkleCount)
+
 	local holder = create("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
@@ -2714,14 +2775,33 @@ function Library:CreateLoader(settings)
 		Parent = gui,
 	})
 	local scale = create("UIScale", { Scale = 0.92, Parent = holder })
+	-- Accent glow + travelling shine around the window (created first so it sits behind)
+	local winGlow = makeGlow(holder, 6, 18, 0)
 	local main = create("CanvasGroup", {
 		Size = UDim2.fromScale(1, 1),
 		GroupTransparency = 1,
+		BackgroundTransparency = Alpha,
 		BorderSizePixel = 0,
 		Bind = { BackgroundColor3 = "Background" },
 		Parent = holder,
 	})
 	corner(main, 18)
+
+	-- Soft highlight across the top of the window, like the main window
+	local sheen = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 170),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+		Parent = main,
+	})
+	create("UIGradient", {
+		Rotation = 90,
+		Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.945),
+			NumberSequenceKeypoint.new(1, 1),
+		}),
+		Parent = sheen,
+	})
 
 	-- Fade + pop, and shrink to fit small screens (phones)
 	local shown = Instance.new("NumberValue")
@@ -2756,17 +2836,23 @@ function Library:CreateLoader(settings)
 		return create("TextLabel", props)
 	end
 
+	-- Same look as the main window's elements: slightly see-through with a 1px border
 	local function card(parent, pos, size)
 		local f = create("Frame", {
 			Position = pos,
 			Size = size,
+			BackgroundTransparency = Alpha,
 			BorderSizePixel = 0,
 			Bind = { BackgroundColor3 = "Element" },
 			Parent = parent,
 		})
 		corner(f, 16)
+		hairline(f, 16)
 		return f
 	end
+
+	-- Per-element animations (button shimmer, avatar glow), run every frame while shown
+	local animators = {}
 
 	local function rippleIn(container, color)
 		local rel = pointerIn(container)
@@ -2797,6 +2883,32 @@ function Library:CreateLoader(settings)
 		})
 		corner(face, 16)
 		local squish = create("UIScale", { Parent = face })
+		if primary then
+			-- light band sweeping across, like the slider fill in the main window
+			local shimmer = create("Frame", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundColor3 = Color3.new(1, 1, 1),
+				BorderSizePixel = 0,
+				Parent = face,
+			})
+			local shimmerGradient = create("UIGradient", {
+				Rotation = 20,
+				Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 1),
+					NumberSequenceKeypoint.new(0.4, 1),
+					NumberSequenceKeypoint.new(0.5, 0.82),
+					NumberSequenceKeypoint.new(0.6, 1),
+					NumberSequenceKeypoint.new(1, 1),
+				}),
+				Parent = shimmer,
+			})
+			table.insert(animators, function(t)
+				shimmerGradient.Offset = Vector2.new(((t * 0.35) % 2) - 1, 0)
+			end)
+		else
+			face.BackgroundTransparency = Alpha
+			hairline(face, 16)
+		end
 		local b = create("TextButton", {
 			Size = UDim2.fromScale(1, 1),
 			BackgroundTransparency = 1,
@@ -2839,14 +2951,21 @@ function Library:CreateLoader(settings)
 	------------------------------------------------------------------
 	local left = create("Frame", { Size = UDim2.new(0, LEFT, 1, 0), BackgroundTransparency = 1, Parent = main })
 
-	local avatar = create("ImageLabel", {
+	-- Avatar sits in a wrapper so a soft accent glow can pulse behind it
+	local avatarWrap = create("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.new(0.5, 0, 0, 52),
 		Size = UDim2.fromOffset(124, 124),
+		BackgroundTransparency = 1,
+		Parent = left,
+	})
+	local avatarGlow = makeGlow(avatarWrap, 3, 62, 1.5)
+	local avatar = create("ImageLabel", {
+		Size = UDim2.fromScale(1, 1),
 		BorderSizePixel = 0,
 		Image = "",
 		Bind = { BackgroundColor3 = "Element" },
-		Parent = left,
+		Parent = avatarWrap,
 	})
 	create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = avatar })
 	local ring = create("UIStroke", { Thickness = 3.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = avatar })
@@ -2960,7 +3079,7 @@ function Library:CreateLoader(settings)
 		BackgroundTransparency = 1,
 		Parent = main,
 	})
-	text(right, {
+	local titleLabel = text(right, {
 		Position = UDim2.fromOffset(0, 24),
 		Size = UDim2.new(1, -96, 0, 34),
 		FontFace = F.Bold,
@@ -2968,6 +3087,14 @@ function Library:CreateLoader(settings)
 		Text = settings.Name or "Loader",
 		Bind = { TextColor3 = "Text" },
 	})
+	-- faint accent outline on the title gives it the same soft glow as the main window's title
+	local titleStroke = create("UIStroke", {
+		Thickness = 1,
+		Transparency = 0.7,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual,
+		Parent = titleLabel,
+	})
+	paint(function() titleStroke.Color = accent() end)
 
 	local function iconButton(glyph, xOffset, size)
 		local b = create("TextButton", {
@@ -3397,6 +3524,30 @@ function Library:CreateLoader(settings)
 		end
 		fire(kcfg.OnGetKey)
 	end)
+
+	-- Window outline (last, so it sits on top of everything)
+	hairline(main, 18, 0.3)
+
+	------------------------------------------------------------------
+	-- Effects: glow, shine, sprinkles, shimmer (every frame while visible)
+	------------------------------------------------------------------
+	local function recolorEffects()
+		recolorGlow(winGlow, accent())
+		recolorGlow(avatarGlow, accent())
+		recolorSprinkles(sprinkles, accent())
+	end
+	paint(recolorEffects)
+
+	local startTime = os.clock()
+	table.insert(conns, RunService.Heartbeat:Connect(function(dt)
+		local k = shown.Value
+		if k <= 0 then return end
+		local t = os.clock() - startTime
+		animateGlow(winGlow, k, t)
+		animateGlow(avatarGlow, k * 0.8, t)
+		animateSprinkles(sprinkles, dt, t, k)
+		for _, fn in ipairs(animators) do fn(t) end
+	end))
 
 	------------------------------------------------------------------
 	-- Dragging, refresh, close
