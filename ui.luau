@@ -39,6 +39,17 @@
 	Toggle Loop: while the toggle is ON, Loop runs over and over (every Interval seconds,
 	default 0.1) until it is switched OFF. Callback still fires once per change.
 
+	SHARED SETTINGS: Theme, Font, Toggle Window key, Info Bar and Anti AFK (all in the gear page)
+	are stored in GuiLibrary/GlobalSettings.json and shared by every script that uses this
+	library. A saved choice beats the Theme = "..." a script passes in; that is only the default.
+	Change the file name with Library.GlobalSettingsFile = "MyFolder/File.json" before CreateWindow.
+
+	HOTKEYS: right-click any button or toggle, then press a key (Escape cancels, Backspace clears).
+	Options: Bind = Enum.KeyCode.X, element:SetBind(KeyCode or nil).
+
+	USER PANEL: bottom-left avatar / name / "Premium" or "Regular". Premium (Roblox Premium, or
+	Premium = true in CreateWindow, or Window:SetPremium(bool)) gives the name a theme-coloured shimmer.
+
 	AUTOSAVE: every element's value is saved to a JSON file whenever it changes and is
 	restored (callbacks included) the next time the script runs. Without a Flag, the save
 	key is "<Tab name>/<Element name>". Saving needs file access (writefile/readfile);
@@ -241,6 +252,46 @@ function Library:SetTheme(name)
 		end
 	end
 end
+
+----------------------------------------------------------------------
+-- Shared appearance settings
+----------------------------------------------------------------------
+-- Theme, font, window toggle key, info bar and Anti AFK are remembered in ONE file that every
+-- script using this library shares, so they stay the same from script to script.
+-- Per-script values (toggles, sliders...) still live in each script's own ConfigurationSaving file.
+Library.GlobalSettingsFile = "GuiLibrary/GlobalSettings.json"
+local globalSettings = {}
+local globalFiles = type(writefile) == "function" and type(readfile) == "function" and type(isfile) == "function"
+if globalFiles then
+	pcall(function()
+		if isfile(Library.GlobalSettingsFile) then
+			local data = HttpService:JSONDecode(readfile(Library.GlobalSettingsFile))
+			if type(data) == "table" then
+				globalSettings = data
+			end
+		end
+	end)
+end
+local globalPending = false
+local function saveGlobal(key, value)
+	globalSettings[key] = value
+	if not globalFiles or globalPending then return end
+	globalPending = true
+	task.delay(0.4, function()
+		globalPending = false
+		pcall(function()
+			local path = Library.GlobalSettingsFile
+			local dir = path:match("^(.*)/[^/]+$")
+			if dir and type(makefolder) == "function" and type(isfolder) == "function" and not isfolder(dir) then
+				makefolder(dir)
+			end
+			writefile(path, HttpService:JSONEncode(globalSettings))
+		end)
+	end)
+end
+-- Saved choices win over whatever default a script asks for
+if globalSettings.Theme then Library:SetTheme(globalSettings.Theme) end
+if globalSettings.Font then Library:SetFont(globalSettings.Font) end
 
 ----------------------------------------------------------------------
 -- Helpers
@@ -1225,7 +1276,7 @@ end
 ----------------------------------------------------------------------
 function Library:CreateWindow(settings)
 	settings = settings or {}
-	if settings.Theme then
+	if settings.Theme and not globalSettings.Theme then
 		Library:SetTheme(settings.Theme)
 	end
 
@@ -1260,6 +1311,9 @@ function Library:CreateWindow(settings)
 			end
 		end)
 	end
+	for k, v in pairs(globalSettings) do
+		flags["__global_" .. k] = v
+	end
 	Window.Flags = flags
 
 	local savePending = false
@@ -1269,12 +1323,22 @@ function Library:CreateWindow(settings)
 			if type(makefolder) == "function" and type(isfolder) == "function" and not isfolder(folder) then
 				makefolder(folder)
 			end
-			writefile(filePath, HttpService:JSONEncode(flags))
+			local own = {}
+			for k, v in pairs(flags) do
+				if string.sub(k, 1, 9) ~= "__global_" then
+					own[k] = v
+				end
+			end
+			writefile(filePath, HttpService:JSONEncode(own))
 		end)
 	end
 	local function changed(flag, value)
 		if flags[flag] == value then return end
 		flags[flag] = value
+		if string.sub(flag, 1, 9) == "__global_" then
+			saveGlobal(string.sub(flag, 10), value) -- shared across scripts
+			return
+		end
 		if canSave and not savePending then
 			savePending = true
 			task.delay(0.4, function()
@@ -1434,6 +1498,46 @@ function Library:CreateWindow(settings)
 		end
 	end
 	onTheme(infoBar, function() refreshInfo() end)
+
+	-- Drag the info bar anywhere (right-click it to put it back). Position is shared across scripts.
+	local infoHome = UDim2.new(1, -24, 0, 18)
+	local ip = globalSettings.InfoPos
+	if type(ip) == "table" and #ip == 4 then
+		infoHolder.Position = UDim2.new(ip[1], ip[2], ip[3], ip[4])
+	end
+	local infoDragging, infoDragStart, infoStartPos
+	infoBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			infoDragging, infoDragStart, infoStartPos = true, input.Position, infoHolder.Position
+		elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+			infoHolder.Position = infoHome
+			saveGlobal("InfoPos", nil)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if infoDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local d = input.Position - infoDragStart
+			infoHolder.Position = UDim2.new(
+				infoStartPos.X.Scale, infoStartPos.X.Offset + d.X,
+				infoStartPos.Y.Scale, infoStartPos.Y.Offset + d.Y
+			)
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if infoDragging and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+			infoDragging = false
+			local pos = infoHolder.Position
+			-- keep it on screen, then remember where it ended up
+			local vp = gui.AbsoluteSize
+			local x = infoHolder.AbsolutePosition.X + infoHolder.AbsoluteSize.X
+			local y = infoHolder.AbsolutePosition.Y
+			local dx = math.clamp(x, infoHolder.AbsoluteSize.X, vp.X) - x
+			local dy = math.clamp(y, 0, vp.Y - infoHolder.AbsoluteSize.Y) - y
+			pos = UDim2.new(pos.X.Scale, pos.X.Offset + dx, pos.Y.Scale, pos.Y.Offset + dy)
+			infoHolder.Position = pos
+			saveGlobal("InfoPos", { pos.X.Scale, pos.X.Offset, pos.Y.Scale, pos.Y.Offset })
+		end
+	end)
 
 	local infoFade = Instance.new("NumberValue") -- 0 = hidden, 1 = shown
 	infoFade.Value = 0
@@ -1696,7 +1800,7 @@ function Library:CreateWindow(settings)
 		Parent = main,
 	})
 	local tabBar = create("ScrollingFrame", {
-		Size = UDim2.new(0, 130, 1, 0),
+		Size = UDim2.new(0, 130, 1, -54), -- bottom 54px belong to the user panel
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 0,
@@ -1719,6 +1823,153 @@ function Library:CreateWindow(settings)
 		BackgroundTransparency = 1,
 		Parent = content,
 	})
+
+	----------------------------------------------------------------
+	-- User panel (bottom left, like Discord): avatar + status dot, name, Premium / Regular.
+	-- Premium names get an animated shimmer + glow built from the current theme's accent.
+	-- Premium = Roblox Premium membership; pass Premium = true/false to CreateWindow to override,
+	-- or call Window:SetPremium(bool) later.
+	----------------------------------------------------------------
+	local player = Players.LocalPlayer
+	local isPremium = false
+	do
+		local ok, m = pcall(function() return player.MembershipType == Enum.MembershipType.Premium end)
+		isPremium = ok and m or false
+	end
+	if type(settings.Premium) == "boolean" then
+		isPremium = settings.Premium
+	end
+
+	local userPanel = create("Frame", {
+		Size = UDim2.new(0, 120, 0, 44),
+		Position = UDim2.new(0, 8, 1, -50),
+		BackgroundTransparency = Alpha,
+		BorderSizePixel = 0,
+		Bind = { BackgroundColor3 = "Topbar" },
+		Parent = content,
+	})
+	corner(userPanel, 10)
+	hairline(userPanel, 10)
+
+	local avatar = create("ImageLabel", {
+		Size = UDim2.fromOffset(30, 30),
+		Position = UDim2.fromOffset(7, 7),
+		BackgroundTransparency = 0,
+		BorderSizePixel = 0,
+		Image = "",
+		Bind = { BackgroundColor3 = "Element" },
+		Parent = userPanel,
+	})
+	create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = avatar })
+	local avatarRing = create("UIStroke", {
+		Thickness = 1.5,
+		Transparency = 1,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		Bind = { Color = "Accent" },
+		Parent = avatar,
+	})
+	task.spawn(function()
+		local ok, img = pcall(function()
+			return Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+		end)
+		if ok and img and avatar.Parent then
+			avatar.Image = img
+		end
+	end)
+
+	-- Online dot, with a ring in the panel colour so it reads as a cut-out
+	local dot = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.fromOffset(11, 11),
+		Position = UDim2.fromOffset(7 + 27, 7 + 27),
+		BackgroundColor3 = Color3.fromRGB(67, 181, 129),
+		BorderSizePixel = 0,
+		Parent = userPanel,
+	})
+	create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = dot })
+	create("UIStroke", {
+		Thickness = 2,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		Bind = { Color = "Topbar" },
+		Parent = dot,
+	})
+
+	local userName = create("TextLabel", {
+		Size = UDim2.new(1, -48, 0, 18),
+		Position = UDim2.fromOffset(44, 6),
+		BackgroundTransparency = 1,
+		Text = player.DisplayName ~= "" and player.DisplayName or player.Name,
+		TextSize = 13,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		TextColor3 = Color3.new(1, 1, 1),
+		Parent = userPanel,
+	})
+	bindFont(userName, "Heading")
+	local nameStroke = create("UIStroke", {
+		Thickness = 1,
+		Transparency = 1,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual,
+		Bind = { Color = "Accent" },
+		Parent = userName,
+	})
+	local nameGradient = create("UIGradient", { Parent = userName })
+	local userRank = create("TextLabel", {
+		Size = UDim2.new(1, -48, 0, 14),
+		Position = UDim2.fromOffset(44, 23),
+		BackgroundTransparency = 1,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = userPanel,
+	})
+	bindFont(userRank, "Body")
+
+	local function paintUser()
+		local acc = Theme.Accent
+		if isPremium then
+			local bright = acc:Lerp(Color3.new(1, 1, 1), 0.7)
+			nameGradient.Enabled = true
+			nameGradient.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, acc),
+				ColorSequenceKeypoint.new(0.35, bright),
+				ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
+				ColorSequenceKeypoint.new(0.65, bright),
+				ColorSequenceKeypoint.new(1, acc),
+			})
+			nameStroke.Transparency = 0.55
+			avatarRing.Transparency = 0.1
+			userRank.Text = "★ PREMIUM"
+			userRank.TextColor3 = acc
+		else
+			nameGradient.Enabled = false
+			nameStroke.Transparency = 1
+			avatarRing.Transparency = 1
+			userRank.Text = "Regular"
+			userRank.TextColor3 = Theme.SubText
+		end
+	end
+	onTheme(userPanel, paintUser)
+	paintUser()
+
+	-- Shimmer sweeping across a premium name, plus a slow glow pulse
+	local nameConn
+	nameConn = RunService.Heartbeat:Connect(function()
+		if not userPanel:IsDescendantOf(game) then
+			nameConn:Disconnect()
+			return
+		end
+		if isPremium then
+			local t = os.clock()
+			nameGradient.Offset = Vector2.new(((t * 0.45) % 2.4) - 1.2, 0)
+			nameStroke.Transparency = 0.5 + 0.2 * math.sin(t * 2.2)
+		end
+	end)
+
+	function Window:SetPremium(v)
+		isPremium = v == true
+		paintUser()
+	end
 
 	-- Hairline dividers: under the topbar and between the sidebar and the pages
 	create("Frame", {
@@ -1901,10 +2152,22 @@ function Library:CreateWindow(settings)
 		gui:Destroy()
 	end
 
+	-- Hotkeys for buttons and toggles (right-click an element to set one)
+	local keyBinds = {}
 	local keyConn = UserInputService.InputBegan:Connect(function(input, processed)
 		if processed or listeningForKey or splashActive then return end
 		if input.KeyCode == toggleKey then
 			Window:Toggle()
+		end
+		if input.KeyCode ~= Enum.KeyCode.Unknown then
+			for i = #keyBinds, 1, -1 do
+				local b = keyBinds[i]
+				if not b.inst:IsDescendantOf(game) then
+					table.remove(keyBinds, i)
+				elseif b.key == input.KeyCode then
+					task.spawn(b.action)
+				end
+			end
 		end
 	end)
 	gui.Destroying:Connect(function() keyConn:Disconnect() end)
@@ -1918,6 +2181,74 @@ function Library:CreateWindow(settings)
 		-- Save key for an element: explicit Flag, or "<Tab>/<Element name>"
 		local function flagOf(o, fallback)
 			return o.Flag or (name .. "/" .. (o.Name or fallback))
+		end
+
+		-- Hotkey support for buttons/toggles: RIGHT-CLICK the element, then press a key.
+		-- Escape cancels, Backspace/Delete clears. Also settable with Bind = Enum.KeyCode.X
+		-- in the element options, or element:SetBind(Enum.KeyCode.X / nil).
+		local function attachBind(o, flag, target, parent, chipRight, action)
+			local bindFlag = flag .. "/Bind"
+			local key = Enum.KeyCode.Unknown
+			if type(flags[bindFlag]) == "string" then
+				if flags[bindFlag] ~= "" then
+					local ok, saved = pcall(function() return Enum.KeyCode[flags[bindFlag]] end)
+					if ok and saved then key = saved end
+				end
+			elseif typeof(o.Bind) == "EnumItem" then
+				key = o.Bind
+			end
+
+			local chip = create("TextLabel", {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -chipRight, 0.5, 0),
+				Size = UDim2.fromOffset(0, 18),
+				AutomaticSize = Enum.AutomaticSize.X,
+				BackgroundTransparency = 0.55,
+				BorderSizePixel = 0,
+				Text = key.Name,
+				FontRole = "Heading",
+				TextSize = 11,
+				Visible = key ~= Enum.KeyCode.Unknown,
+				ZIndex = 5,
+				Bind = { BackgroundColor3 = "Stroke", TextColor3 = "SubText" },
+				Parent = parent,
+			})
+			corner(chip, 5)
+			create("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), Parent = chip })
+
+			local entry = { key = key, action = action, inst = chip }
+			table.insert(keyBinds, entry)
+
+			local api = {}
+			local function setKey(k)
+				key = k or Enum.KeyCode.Unknown
+				entry.key = key
+				chip.Text = key.Name
+				chip.Visible = key ~= Enum.KeyCode.Unknown
+				changed(bindFlag, key == Enum.KeyCode.Unknown and "" or key.Name)
+			end
+			api.Set = setKey
+
+			target.MouseButton2Click:Connect(function()
+				if listeningForKey then return end
+				listeningForKey = true
+				chip.Text = "press a key..."
+				chip.Visible = true
+				local conn
+				conn = UserInputService.InputBegan:Connect(function(input)
+					if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+					conn:Disconnect()
+					task.defer(function() listeningForKey = false end)
+					if input.KeyCode == Enum.KeyCode.Escape then
+						setKey(key) -- cancel: restore the label
+					elseif input.KeyCode == Enum.KeyCode.Backspace or input.KeyCode == Enum.KeyCode.Delete then
+						setKey(nil)
+					else
+						setKey(input.KeyCode)
+					end
+				end)
+			end)
+			return api
 		end
 
 		tabCount += 1
@@ -2051,7 +2382,14 @@ function Library:CreateWindow(settings)
 			b.MouseLeave:Connect(release)
 			b.MouseButton1Click:Connect(function() fire(o.Callback) end)
 
-			return { Destroy = function() slot:Destroy() end }
+			local Button = { Destroy = function() slot:Destroy() end }
+			local bind = attachBind(o, flagOf(o, "Button"), b, f, 10, function()
+				tween(squish, { Scale = 0.96 }, 0.08)
+				task.delay(0.1, function() tween(squish, { Scale = 1 }, 0.3, Enum.EasingStyle.Back) end)
+				fire(o.Callback)
+			end)
+			Button.SetBind = function(_, k) bind.Set(k) end
+			return Button
 		end
 
 		-- Toggle (knob stretch, halo pulse, row flash, optional Loop) -
@@ -2177,6 +2515,8 @@ function Library:CreateWindow(settings)
 			end
 
 			click.MouseButton1Click:Connect(function() Toggle:Set(not value) end)
+			local bind = attachBind(o, flag, click, f, 58, function() Toggle:Set(not value) end)
+			Toggle.SetBind = function(_, k) bind.Set(k) end
 			onTheme(track, paint)
 			paint()
 
@@ -2602,6 +2942,7 @@ function Library:CreateWindow(settings)
 	local SettingsTab = Window:CreateTab("Settings", true)
 	SettingsTab:CreateDropdown({
 		Name = "Theme",
+		Flag = "__global_Theme",
 		Options = ThemeOrder,
 		CurrentOption = Library.CurrentTheme,
 		Callback = function(name)
@@ -2610,6 +2951,7 @@ function Library:CreateWindow(settings)
 	})
 	SettingsTab:CreateDropdown({
 		Name = "Font",
+		Flag = "__global_Font",
 		Options = FontOrder,
 		CurrentOption = Library.CurrentFont,
 		Callback = function(name)
@@ -2618,6 +2960,7 @@ function Library:CreateWindow(settings)
 	})
 	toggleBind = SettingsTab:CreateKeybind({
 		Name = "Toggle Window",
+		Flag = "__global_ToggleKey",
 		CurrentKeybind = toggleKey,
 		Changed = function(key)
 			toggleKey = key
@@ -2625,11 +2968,42 @@ function Library:CreateWindow(settings)
 	})
 	SettingsTab:CreateToggle({
 		Name = "Info Bar",
+		Flag = "__global_InfoBar",
 		CurrentValue = settings.InfoBar ~= false,
 		Callback = function(v)
 			Window:SetInfoBar(v)
 		end,
 	})
+	-- Anti AFK: when Roblox reports the player as idle, send a fake click so it doesn't kick them
+	local antiAfkConn
+	SettingsTab:CreateToggle({
+		Name = "Anti AFK",
+		Flag = "__global_AntiAfk",
+		CurrentValue = false,
+		Callback = function(v)
+			if antiAfkConn then
+				antiAfkConn:Disconnect()
+				antiAfkConn = nil
+			end
+			if v then
+				antiAfkConn = Players.LocalPlayer.Idled:Connect(function()
+					local ok, err = pcall(function()
+						local vu = game:GetService("VirtualUser")
+						vu:CaptureController()
+						vu:ClickButton2(Vector2.new(0, 0))
+					end)
+					if not ok then
+						warn("[GuiLibrary] Anti AFK failed: " .. tostring(err))
+					end
+				end)
+			end
+		end,
+	})
+	if globalFiles then
+		SettingsTab:CreateLabel("Appearance: shared across scripts  -  " .. Library.GlobalSettingsFile)
+	else
+		SettingsTab:CreateLabel("Appearance: not saved (no file access here)")
+	end
 	if not saveEnabled then
 		SettingsTab:CreateLabel("Autosave: off")
 	elseif not hasFiles then
@@ -2709,7 +3083,7 @@ end
 
 function Library:CreateLoader(settings)
 	settings = settings or {}
-	if settings.Theme then
+	if settings.Theme and not globalSettings.Theme then
 		Library:SetTheme(settings.Theme)
 	end
 
