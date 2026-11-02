@@ -1,0 +1,751 @@
+--[[
+    Scals Hub - Player
+    Loads the UI library from GitHub, then builds the hub.
+
+    Player tab : custom WalkSpeed, Infinite Jump
+    Visuals tab: ESP boxes (with name + distance), Chams, team check, colors, NPCs
+    Aimbot tab : FOV limit + circle, FOV radius, smoothing, aim part, team/wall check, NPCs
+    NPCs = models in workspace whose PrimaryPart is HumanoidRootPart (not player characters)
+    (The outfit editor lives in scripts/outfit.lua)
+]]
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/rawified/scals-hub/refs/heads/main/ui.luau"))()
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+
+local Settings = {
+	SpeedEnabled = false,
+	WalkSpeed = 32,           -- studs per second (Roblox default is 16)
+	InfiniteJump = false,
+
+	Boxes = false,
+	Names = true,             -- name + distance above each box
+	Chams = false,
+	TeamCheck = false,        -- skip players on your own team
+	Color = "Team Color",
+	ChamsFill = 0.5,          -- 0 = solid fill, 1 = outline only
+	IncludeNPCs = false,      -- also show models whose PrimaryPart is HumanoidRootPart
+}
+
+local Aim = {
+	Enabled = false,
+	Activation = "Hold Right Mouse", -- "Hold Right Mouse" | "Always"
+	Method = "Camera",               -- "Camera" | "Mouse" (mousemoverel)
+	Part = "Head",                   -- "Head" | "Torso"
+	UseFov = true,                   -- only target players inside the circle
+	ShowFov = true,                  -- draw the circle
+	Fov = 120,                       -- circle radius in pixels
+	Smoothing = 5,                   -- 1 = instant snap, higher = slower
+	TeamCheck = true,
+	WallCheck = false,               -- only target players you can actually see
+	IncludeNPCs = false,             -- also target NPC models (PrimaryPart = HumanoidRootPart)
+}
+
+-- Every connection we make, so Unload can disconnect them all
+local connections = {}
+local function track(conn)
+	table.insert(connections, conn)
+	return conn
+end
+
+local function getHumanoid()
+	local char = player.Character
+	return char and char:FindFirstChildOfClass("Humanoid")
+end
+
+----------------------------------------------------------------------
+-- WalkSpeed
+-- Re-applied every frame, because many games reset WalkSpeed (sprinting,
+-- respawning, stuns). The game's own speed is remembered and put back
+-- when the option is switched off.
+----------------------------------------------------------------------
+local speedHum, defaultSpeed
+
+local function restoreSpeed()
+	if speedHum and speedHum.Parent and defaultSpeed then
+		speedHum.WalkSpeed = defaultSpeed
+	end
+	speedHum, defaultSpeed = nil, nil
+end
+
+track(RunService.Heartbeat:Connect(function()
+	if not Settings.SpeedEnabled then return end
+	local hum = getHumanoid()
+	if not hum then return end
+	if hum ~= speedHum then
+		-- new character (or first time on): remember the game's speed for this humanoid
+		speedHum, defaultSpeed = hum, hum.WalkSpeed
+	end
+	if hum.WalkSpeed ~= Settings.WalkSpeed then
+		hum.WalkSpeed = Settings.WalkSpeed
+	end
+end))
+
+----------------------------------------------------------------------
+-- Infinite Jump
+-- JumpRequest fires for the space bar and the mobile jump button, even mid-air.
+----------------------------------------------------------------------
+local lastJump = 0
+
+track(UserInputService.JumpRequest:Connect(function()
+	if not Settings.InfiniteJump then return end
+	local now = os.clock()
+	if now - lastJump < 0.1 then return end -- holding space would otherwise rocket you up
+	lastJump = now
+	local hum = getHumanoid()
+	if hum and hum.Health > 0 then
+		hum:ChangeState(Enum.HumanoidStateType.Jumping)
+	end
+end))
+
+----------------------------------------------------------------------
+-- ESP containers
+-- Prefer the executor's hidden GUI folder (game scripts can't see it),
+-- then CoreGui, then PlayerGui as a last resort.
+----------------------------------------------------------------------
+local hiddenParent
+pcall(function()
+	if typeof(gethui) == "function" then
+		hiddenParent = gethui()
+	end
+end)
+if not hiddenParent then
+	pcall(function()
+		local coreGui = game:GetService("CoreGui")
+		local probe = Instance.new("Folder")
+		probe.Parent = coreGui -- errors when we don't have access
+		probe:Destroy()
+		hiddenParent = coreGui
+	end)
+end
+
+local espGui = Instance.new("ScreenGui")
+espGui.Name = "ScalsESP"
+espGui.IgnoreGuiInset = true -- so screen positions match the camera's viewport
+espGui.ResetOnSpawn = false
+espGui.DisplayOrder = 10      -- below the hub window
+espGui.Parent = hiddenParent or player:WaitForChild("PlayerGui")
+
+local chamsFolder = Instance.new("Folder")
+chamsFolder.Name = "ScalsChams"
+chamsFolder.Parent = hiddenParent or workspace
+
+----------------------------------------------------------------------
+-- Colors / team check
+----------------------------------------------------------------------
+local Colors = {
+	White = Color3.fromRGB(245, 245, 245),
+	Red = Color3.fromRGB(255, 70, 70),
+	Green = Color3.fromRGB(80, 230, 120),
+	Blue = Color3.fromRGB(80, 150, 255),
+	Yellow = Color3.fromRGB(255, 220, 70),
+	Purple = Color3.fromRGB(180, 100, 255),
+}
+
+-- ESP/aimbot targets are either a Player or an NPC Model
+local function espColor(key)
+	if Settings.Color == "Team Color" then
+		return key:IsA("Player") and key.Team and key.TeamColor.Color or Colors.White
+	end
+	return Colors[Settings.Color] or Colors.White
+end
+
+local function isTeammate(key)
+	return Settings.TeamCheck and key:IsA("Player") and key.Team ~= nil and key.Team == player.Team
+end
+
+----------------------------------------------------------------------
+-- NPCs: models in workspace whose PrimaryPart is called HumanoidRootPart
+-- (player characters excluded)
+----------------------------------------------------------------------
+local npcs = {} -- [Model] = true (candidates; checked again before use)
+
+local function isNpc(model)
+	local root = model.PrimaryPart
+	return root ~= nil
+		and root.Name == "HumanoidRootPart"
+		and model:IsDescendantOf(workspace)
+		and Players:GetPlayerFromCharacter(model) == nil
+end
+
+-- Returns the model, its root part and a display name, or nil if it isn't a live target
+local function targetInfo(key, includeNpcs)
+	if key:IsA("Player") then
+		local char = key.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if not (root and hum and hum.Health > 0) then return nil end
+		return char, root, key.DisplayName
+	end
+	if not (includeNpcs and isNpc(key)) then return nil end
+	local hum = key:FindFirstChildOfClass("Humanoid")
+	if hum and hum.Health <= 0 then return nil end -- models without a Humanoid always count
+	return key, key.PrimaryPart, key.Name
+end
+
+----------------------------------------------------------------------
+-- ESP objects (one set per player / NPC)
+----------------------------------------------------------------------
+local esp = {} -- [Player or Model] = { box, stroke, label, highlight }
+
+local function createEsp(plr)
+	if plr == player or esp[plr] then return end
+
+	local box = Instance.new("Frame")
+	box.Name = plr.Name
+	box.BackgroundTransparency = 1
+	box.BorderSizePixel = 0
+	box.Visible = false
+	box.Parent = espGui
+
+	-- thick dark outline underneath, thin colored line on top: readable on any background
+	local outline = Instance.new("UIStroke")
+	outline.Thickness = 3
+	outline.Transparency = 0.4
+	outline.Color = Color3.new(0, 0, 0)
+	outline.Parent = box
+
+	local inner = Instance.new("Frame")
+	inner.Size = UDim2.fromScale(1, 1)
+	inner.BackgroundTransparency = 1
+	inner.BorderSizePixel = 0
+	inner.Parent = box
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 1
+	stroke.Parent = inner
+
+	local label = Instance.new("TextLabel")
+	label.AnchorPoint = Vector2.new(0.5, 1)
+	label.Position = UDim2.new(0.5, 0, 0, -3)
+	label.Size = UDim2.fromOffset(200, 14)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.GothamMedium
+	label.TextSize = 12
+	label.TextStrokeTransparency = 0.4
+	label.Text = ""
+	label.Parent = box
+
+	local hl = Instance.new("Highlight")
+	hl.Name = plr.Name
+	hl.Enabled = false
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop -- visible through walls
+	hl.OutlineTransparency = 0
+	hl.Parent = chamsFolder
+
+	esp[plr] = { box = box, stroke = stroke, label = label, highlight = hl }
+end
+
+local function removeEsp(plr)
+	local e = esp[plr]
+	if not e then return end
+	e.box:Destroy()
+	e.highlight:Destroy()
+	esp[plr] = nil
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do
+	createEsp(plr)
+end
+track(Players.PlayerAdded:Connect(createEsp))
+track(Players.PlayerRemoving:Connect(removeEsp))
+
+-- NPC tracking starts the first time ESP or aimbot NPCs are switched on:
+-- one scan of workspace, then new HumanoidRootParts are picked up as they appear.
+local npcTracking = false
+
+local function addNpcCandidate(inst)
+	if inst.Name ~= "HumanoidRootPart" or not inst:IsA("BasePart") then return end
+	local model = inst.Parent
+	if not (model and model:IsA("Model")) or npcs[model] then return end
+	if Players:GetPlayerFromCharacter(model) then return end
+	npcs[model] = true
+	createEsp(model)
+end
+
+local function startNpcTracking()
+	if npcTracking then return end
+	npcTracking = true
+	track(workspace.DescendantAdded:Connect(addNpcCandidate))
+	task.spawn(function()
+		for i, d in ipairs(workspace:GetDescendants()) do
+			addNpcCandidate(d)
+			if i % 5000 == 0 then task.wait() end -- don't freeze big maps
+		end
+	end)
+end
+
+----------------------------------------------------------------------
+-- ESP update (every frame)
+----------------------------------------------------------------------
+local HEAD_OFFSET = Vector3.new(0, 2.6, 0)  -- root part -> top of head
+local FEET_OFFSET = Vector3.new(0, 3.2, 0)  -- root part -> feet
+
+local function hide(e)
+	e.box.Visible = false
+	e.highlight.Enabled = false
+end
+
+track(RunService.RenderStepped:Connect(function()
+	local cam = workspace.CurrentCamera
+	local anyOn = Settings.Boxes or Settings.Chams
+	local myChar = player.Character
+	local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+	for key, e in pairs(esp) do
+		if not key:IsA("Player") and not key:IsDescendantOf(workspace) then
+			-- NPC model was removed from the map
+			removeEsp(key)
+			npcs[key] = nil
+			continue
+		end
+
+		local char, root, name = targetInfo(key, Settings.IncludeNPCs)
+		if not (anyOn and cam and char) or isTeammate(key) then
+			hide(e)
+			continue
+		end
+
+		local color = espColor(key)
+
+		-- Chams
+		local hl = e.highlight
+		if Settings.Chams then
+			if hl.Adornee ~= char then hl.Adornee = char end
+			hl.FillColor = color
+			hl.OutlineColor = color
+			hl.FillTransparency = Settings.ChamsFill
+			hl.Enabled = true
+		else
+			hl.Enabled = false
+		end
+
+		-- Box: project head and feet to the screen, width follows height
+		local boxShown = false
+		if Settings.Boxes then
+			local pos = root.Position
+			local top = cam:WorldToViewportPoint(pos + HEAD_OFFSET)
+			local bottom = cam:WorldToViewportPoint(pos - FEET_OFFSET)
+			if top.Z > 0 and bottom.Z > 0 then -- both in front of the camera
+				local h = math.max(bottom.Y - top.Y, 4)
+				local w = h * 0.6
+				local cx = (top.X + bottom.X) / 2
+				e.box.Position = UDim2.fromOffset(cx - w / 2, top.Y)
+				e.box.Size = UDim2.fromOffset(w, h)
+				e.stroke.Color = color
+
+				if Settings.Names then
+					local dist = myRoot and math.floor((myRoot.Position - pos).Magnitude + 0.5)
+					e.label.Text = dist and ("%s [%d]"):format(name, dist) or name
+					e.label.TextColor3 = color
+					e.label.Visible = true
+				else
+					e.label.Visible = false
+				end
+				boxShown = true
+			end
+		end
+		e.box.Visible = boxShown
+	end
+end))
+
+----------------------------------------------------------------------
+-- Aimbot
+-- While the aim key is held, turns the camera (or moves the mouse) toward
+-- the player closest to the cursor, and stays locked on them while they
+-- remain a valid target.
+----------------------------------------------------------------------
+local fovCircle = Instance.new("Frame")
+fovCircle.Name = "FovCircle"
+fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+fovCircle.BackgroundTransparency = 1
+fovCircle.Visible = false
+fovCircle.Parent = espGui
+
+local fovCorner = Instance.new("UICorner")
+fovCorner.CornerRadius = UDim.new(1, 0)
+fovCorner.Parent = fovCircle
+
+local fovStroke = Instance.new("UIStroke")
+fovStroke.Thickness = 1.5
+fovStroke.Transparency = 0.3
+fovStroke.Color = Color3.new(1, 1, 1)
+fovStroke.Parent = fovCircle
+
+local aimRay = RaycastParams.new()
+aimRay.FilterType = Enum.RaycastFilterType.Exclude
+
+local hasMouseMove = typeof(mousemoverel) == "function"
+
+local function partNamed(model, name)
+	local p = model:FindFirstChild(name)
+	return p and p:IsA("BasePart") and p or nil
+end
+
+-- NPCs without a Head/Torso fall back to their root part
+local function aimPart(char, root)
+	if Aim.Part == "Head" then
+		return partNamed(char, "Head") or root
+	end
+	return partNamed(char, "UpperTorso") or partNamed(char, "Torso") or root
+end
+
+local function canSee(cam, part, char)
+	if not Aim.WallCheck then return true end
+	local myChar = player.Character
+	aimRay.FilterDescendantsInstances = myChar and { myChar } or {}
+	local origin = cam.CFrame.Position
+	local result = workspace:Raycast(origin, part.Position - origin, aimRay)
+	return not result or result.Instance:IsDescendantOf(char)
+end
+
+-- Distance on screen from the cursor to a target's aim part, or nil if it can't be targeted
+local function screenDistance(key, cam, mousePos)
+	if key == player then return nil end
+	local char, root = targetInfo(key, Aim.IncludeNPCs)
+	if not char then return nil end
+	if Aim.TeamCheck and key:IsA("Player") and key.Team ~= nil and key.Team == player.Team then return nil end
+	local part = aimPart(char, root)
+	if not part then return nil end
+	local sp, onScreen = cam:WorldToViewportPoint(part.Position)
+	if not onScreen then return nil end
+	local d = (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude
+	if Aim.UseFov and d > Aim.Fov then return nil end
+	if not canSee(cam, part, char) then return nil end
+	return d, part, sp
+end
+
+local function aimHeld()
+	if Aim.Activation == "Always" then return true end
+	return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+end
+
+local lockedTarget
+
+-- Runs right after Roblox's camera update, so our aim isn't overwritten that frame
+RunService:BindToRenderStep("ScalsAimbot", Enum.RenderPriority.Camera.Value + 1, function(dt)
+	local cam = workspace.CurrentCamera
+	if not cam then return end
+	local mousePos = UserInputService:GetMouseLocation()
+
+	fovCircle.Visible = Aim.Enabled and Aim.UseFov and Aim.ShowFov
+	if fovCircle.Visible then
+		fovCircle.Position = UDim2.fromOffset(mousePos.X, mousePos.Y)
+		fovCircle.Size = UDim2.fromOffset(Aim.Fov * 2, Aim.Fov * 2)
+	end
+
+	if not (Aim.Enabled and aimHeld()) then
+		lockedTarget = nil
+		return
+	end
+
+	-- keep the current target while it's still valid, otherwise pick the one closest to the cursor
+	local _, part, sp
+	if lockedTarget then
+		_, part, sp = screenDistance(lockedTarget, cam, mousePos)
+	end
+	if not part then
+		lockedTarget = nil
+		local best
+		local function consider(key)
+			local d, p, s = screenDistance(key, cam, mousePos)
+			if d and (not best or d < best) then
+				best, lockedTarget, part, sp = d, key, p, s
+			end
+		end
+		for _, plr in ipairs(Players:GetPlayers()) do
+			consider(plr)
+		end
+		if Aim.IncludeNPCs then
+			for model in pairs(npcs) do
+				consider(model)
+			end
+		end
+	end
+	if not part then return end
+
+	-- same feel at any frame rate: 1 = snap, higher = slower
+	local alpha = 1 - (1 - 1 / Aim.Smoothing) ^ (dt * 60)
+
+	if Aim.Method == "Mouse" and hasMouseMove then
+		local delta = (Vector2.new(sp.X, sp.Y) - mousePos) * alpha
+		mousemoverel(delta.X, delta.Y)
+	else
+		local camPos = cam.CFrame.Position
+		cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(camPos, part.Position), alpha)
+	end
+end)
+
+----------------------------------------------------------------------
+-- Unload: switch everything off and remove the window
+----------------------------------------------------------------------
+local Window
+
+local function unload()
+	Settings.SpeedEnabled = false
+	Settings.InfiniteJump = false
+	Aim.Enabled = false
+	RunService:UnbindFromRenderStep("ScalsAimbot")
+	restoreSpeed()
+	for _, c in ipairs(connections) do
+		c:Disconnect()
+	end
+	espGui:Destroy()
+	chamsFolder:Destroy()
+	if Window then Window:Destroy() end
+end
+
+----------------------------------------------------------------------
+-- UI
+----------------------------------------------------------------------
+Window = Library:CreateWindow({
+	Name = "Scals Hub",
+	ToggleKey = Enum.KeyCode.RightControl,
+	Theme = "Monochrome",
+	InfoBar = true,
+	ConfigurationSaving = {
+		Enabled = true,
+		FolderName = "ScalsHub",
+		FileName = "PlayerConfig",
+	},
+	Splash = {
+		Image = "rbxassetid://114362863794226",
+		Duration = 4.5,
+		Subtitle = "player",
+	},
+})
+
+-- Player tab ---------------------------------------------------------
+local PlayerTab = Window:CreateTab("Player")
+
+PlayerTab:CreateToggle({
+	Name = "Custom WalkSpeed",
+	CurrentValue = false,
+	Flag = "WalkSpeedEnabled",
+	Callback = function(on)
+		Settings.SpeedEnabled = on
+		if not on then restoreSpeed() end
+	end,
+})
+
+PlayerTab:CreateSlider({
+	Name = "WalkSpeed",
+	Range = { 16, 200 },
+	Increment = 1,
+	Suffix = "studs/s",
+	CurrentValue = Settings.WalkSpeed,
+	Flag = "WalkSpeed",
+	Callback = function(v)
+		Settings.WalkSpeed = v
+	end,
+})
+
+PlayerTab:CreateToggle({
+	Name = "Infinite Jump",
+	CurrentValue = false,
+	Flag = "InfiniteJump",
+	Callback = function(on)
+		Settings.InfiniteJump = on
+	end,
+})
+
+PlayerTab:CreateLabel("Roblox default speed is 16. Very high speeds may get you flagged.")
+
+PlayerTab:CreateButton({
+	Name = "Unload Script",
+	Callback = unload,
+})
+
+-- Visuals tab --------------------------------------------------------
+local VisualsTab = Window:CreateTab("Visuals")
+
+VisualsTab:CreateToggle({
+	Name = "ESP Boxes",
+	CurrentValue = false,
+	Flag = "EspBoxes",
+	Callback = function(on)
+		Settings.Boxes = on
+	end,
+})
+
+VisualsTab:CreateToggle({
+	Name = "Show Names & Distance",
+	CurrentValue = true,
+	Flag = "EspNames",
+	Callback = function(on)
+		Settings.Names = on
+	end,
+})
+
+VisualsTab:CreateToggle({
+	Name = "Chams",
+	CurrentValue = false,
+	Flag = "EspChams",
+	Callback = function(on)
+		Settings.Chams = on
+	end,
+})
+
+VisualsTab:CreateSlider({
+	Name = "Chams Fill Transparency",
+	Range = { 0, 1 },
+	Increment = 0.05,
+	CurrentValue = Settings.ChamsFill,
+	Flag = "ChamsFill",
+	Callback = function(v)
+		Settings.ChamsFill = v
+	end,
+})
+
+VisualsTab:CreateDropdown({
+	Name = "ESP Color",
+	Options = { "Team Color", "White", "Red", "Green", "Blue", "Yellow", "Purple" },
+	CurrentOption = Settings.Color,
+	Flag = "EspColor",
+	Callback = function(c)
+		Settings.Color = c
+	end,
+})
+
+VisualsTab:CreateToggle({
+	Name = "Team Check",
+	CurrentValue = false,
+	Flag = "EspTeamCheck",
+	Callback = function(on)
+		Settings.TeamCheck = on
+	end,
+})
+
+VisualsTab:CreateToggle({
+	Name = "Include NPCs",
+	CurrentValue = false,
+	Flag = "EspNPCs",
+	Callback = function(on)
+		Settings.IncludeNPCs = on
+		if on then startNpcTracking() end
+	end,
+})
+
+VisualsTab:CreateLabel("Chams: Roblox draws at most 31 highlights at once.")
+VisualsTab:CreateLabel("Team Color falls back to white for NPCs and games without teams.")
+VisualsTab:CreateLabel("NPCs = models in workspace whose PrimaryPart is HumanoidRootPart.")
+
+-- Aimbot tab ---------------------------------------------------------
+local AimTab = Window:CreateTab("Aimbot")
+
+AimTab:CreateToggle({
+	Name = "Aimbot",
+	CurrentValue = false,
+	Flag = "Aimbot",
+	Callback = function(on)
+		Aim.Enabled = on
+	end,
+})
+
+AimTab:CreateDropdown({
+	Name = "Activation",
+	Options = { "Hold Right Mouse", "Always" },
+	CurrentOption = Aim.Activation,
+	Flag = "AimActivation",
+	Callback = function(v)
+		Aim.Activation = v
+	end,
+})
+
+AimTab:CreateDropdown({
+	Name = "Aim Part",
+	Options = { "Head", "Torso" },
+	CurrentOption = Aim.Part,
+	Flag = "AimPart",
+	Callback = function(v)
+		Aim.Part = v
+	end,
+})
+
+AimTab:CreateDropdown({
+	Name = "Aim Method",
+	Options = { "Camera", "Mouse" },
+	CurrentOption = Aim.Method,
+	Flag = "AimMethod",
+	Callback = function(v)
+		Aim.Method = v
+		if v == "Mouse" and not hasMouseMove then
+			Library:Notify({ Title = "Aimbot", Content = "Your executor has no mousemoverel, using Camera instead.", Duration = 4 })
+		end
+	end,
+})
+
+AimTab:CreateToggle({
+	Name = "Use FOV",
+	CurrentValue = true,
+	Flag = "AimUseFov",
+	Callback = function(on)
+		Aim.UseFov = on
+	end,
+})
+
+AimTab:CreateToggle({
+	Name = "Show FOV Circle",
+	CurrentValue = true,
+	Flag = "AimShowFov",
+	Callback = function(on)
+		Aim.ShowFov = on
+	end,
+})
+
+AimTab:CreateSlider({
+	Name = "FOV Radius",
+	Range = { 20, 500 },
+	Increment = 5,
+	Suffix = "px",
+	CurrentValue = Aim.Fov,
+	Flag = "AimFov",
+	Callback = function(v)
+		Aim.Fov = v
+	end,
+})
+
+AimTab:CreateSlider({
+	Name = "Smoothing",
+	Range = { 1, 20 },
+	Increment = 0.5,
+	CurrentValue = Aim.Smoothing,
+	Flag = "AimSmoothing",
+	Callback = function(v)
+		Aim.Smoothing = v
+	end,
+})
+
+AimTab:CreateToggle({
+	Name = "Team Check",
+	CurrentValue = true,
+	Flag = "AimTeamCheck",
+	Callback = function(on)
+		Aim.TeamCheck = on
+	end,
+})
+
+AimTab:CreateToggle({
+	Name = "Wall Check",
+	CurrentValue = false,
+	Flag = "AimWallCheck",
+	Callback = function(on)
+		Aim.WallCheck = on
+	end,
+})
+
+AimTab:CreateToggle({
+	Name = "Target NPCs",
+	CurrentValue = false,
+	Flag = "AimNPCs",
+	Callback = function(on)
+		Aim.IncludeNPCs = on
+		if on then startNpcTracking() end
+	end,
+})
+
+AimTab:CreateLabel("Smoothing 1 = instant snap. Higher = slower, more natural.")
+AimTab:CreateLabel("Use Mouse if the game has its own camera and Camera doesn't work.")
