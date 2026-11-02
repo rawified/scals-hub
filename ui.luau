@@ -44,6 +44,13 @@
 	library. A saved choice beats the Theme = "..." a script passes in; that is only the default.
 	Change the file name with Library.GlobalSettingsFile = "MyFolder/File.json" before CreateWindow.
 
+	ANONYMOUS MODE (Settings, or the Streamer Mode card in the loader): hides your name and picture
+	in every window; saved in the shared file. Library:SetAnonymous(bool), Library.Anonymous.
+
+	UNLOAD (Settings > Unload Script, press twice): Library:Unload() switches every toggle off,
+	runs Library:OnUnload(function() ... end) hooks, then removes all windows and notifications.
+	Use OnUnload to disconnect your own connections / restore anything a button changed.
+
 	HOTKEYS: right-click any button or toggle, then press a key (Escape cancels, Backspace clears).
 	Options: Bind = Enum.KeyCode.X, element:SetBind(KeyCode or nil).
 
@@ -294,6 +301,39 @@ end
 -- Saved choices win over whatever default a script asks for
 if globalSettings.Theme then Library:SetTheme(globalSettings.Theme) end
 if globalSettings.Font then Library:SetFont(globalSettings.Font) end
+
+-- Anonymous mode: hides your name and picture in every window (main window panel + loader).
+-- Saved in the shared file, so it stays on from script to script.
+local unloadingAll = false -- while true, nothing gets written to the save files
+Library.Anonymous = globalSettings.Anonymous == true
+local anonListeners = {} -- { owner = instance, fn = function(isAnonymous) }
+function Library:OnAnonymous(owner, fn)
+	table.insert(anonListeners, { owner = owner, fn = fn })
+end
+function Library:SetAnonymous(v)
+	v = v == true
+	if unloadingAll or v == Library.Anonymous then return end -- an unload must not reset the saved choice
+	Library.Anonymous = v
+	saveGlobal("Anonymous", v)
+	for i = #anonListeners, 1, -1 do
+		local l = anonListeners[i]
+		if l.owner:IsDescendantOf(game) then
+			l.fn(v)
+		else
+			table.remove(anonListeners, i)
+		end
+	end
+end
+
+-- Unload: switches every toggle off (so their OFF callbacks undo the feature and loops stop),
+-- runs hooks registered with Library:OnUnload(fn), then removes every window and notification.
+local windows = {}      -- every open window
+local unloadHooks = {}
+function Library:OnUnload(fn)
+	if type(fn) == "function" then
+		table.insert(unloadHooks, fn)
+	end
+end
 
 ----------------------------------------------------------------------
 -- Helpers
@@ -693,6 +733,30 @@ function Library:Notify(settings)
 			wrapper:Destroy()
 		end)
 	end)
+end
+
+function Library:Unload()
+	if unloadingAll then return end
+	unloadingAll = true
+	for _, w in ipairs(windows) do
+		pcall(w._StopFeatures, w)
+	end
+	for _, fn in ipairs(unloadHooks) do
+		pcall(fn)
+	end
+	task.wait() -- let the OFF callbacks run before their windows disappear
+	for i = #windows, 1, -1 do
+		pcall(windows[i].Destroy, windows[i])
+	end
+	table.clear(windows)
+	table.clear(unloadHooks)
+	if notifyGui then
+		pcall(function() notifyGui:Destroy() end)
+		notifyGui = nil
+	end
+	local genv = (typeof(getgenv) == "function" and getgenv()) or _G
+	genv.ScalsLoaderRunning = nil
+	unloadingAll = false
 end
 
 ----------------------------------------------------------------------
@@ -1335,6 +1399,7 @@ function Library:CreateWindow(settings)
 		end)
 	end
 	local function changed(flag, value)
+		if unloadingAll then return end
 		if flags[flag] == value then return end
 		flags[flag] = value
 		if string.sub(flag, 1, 9) == "__global_" then
@@ -1874,12 +1939,21 @@ function Library:CreateWindow(settings)
 		Bind = { Color = "Accent" },
 		Parent = avatar,
 	})
+	local avatarThumb = ""
+	local userName -- created below; applyAnonymous fills it in
+	local function applyAnonymous()
+		if not userName then return end
+		local anon = Library.Anonymous
+		userName.Text = anon and "Anonymous" or (player.DisplayName ~= "" and player.DisplayName or player.Name)
+		avatar.Image = anon and "" or avatarThumb
+	end
 	task.spawn(function()
 		local ok, img = pcall(function()
 			return Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
 		end)
 		if ok and img and avatar.Parent then
-			avatar.Image = img
+			avatarThumb = img
+			applyAnonymous()
 		end
 	end)
 
@@ -1900,7 +1974,7 @@ function Library:CreateWindow(settings)
 		Parent = dot,
 	})
 
-	local userName = create("TextLabel", {
+	userName = create("TextLabel", {
 		Size = UDim2.new(1, -48, 0, 18),
 		Position = UDim2.fromOffset(44, 6),
 		BackgroundTransparency = 1,
@@ -1912,6 +1986,7 @@ function Library:CreateWindow(settings)
 		Parent = userPanel,
 	})
 	bindFont(userName, "Heading")
+	Library:OnAnonymous(userPanel, applyAnonymous)
 	local nameStroke = create("UIStroke", {
 		Thickness = 1,
 		Transparency = 1,
@@ -1957,6 +2032,7 @@ function Library:CreateWindow(settings)
 	end
 	onTheme(userPanel, paintUser)
 	paintUser()
+	applyAnonymous()
 
 	-- Shimmer sweeping across a premium name, plus a slow glow pulse
 	local nameConn
@@ -2168,6 +2244,21 @@ function Library:CreateWindow(settings)
 	function Window:Destroy()
 		gui:Destroy()
 	end
+	function Window:Unload()
+		Library:Unload()
+	end
+	-- Every toggle on this window, so Unload can switch them all off
+	local allToggles = {}
+	function Window._StopFeatures()
+		for _, t in ipairs(allToggles) do
+			pcall(t.Set, t, false)
+		end
+	end
+	table.insert(windows, Window)
+	gui.Destroying:Connect(function()
+		local i = table.find(windows, Window)
+		if i then table.remove(windows, i) end
+	end)
 
 	-- Hotkeys for buttons and toggles (right-click an element to set one)
 	local keyBinds = {}
@@ -2495,6 +2586,7 @@ function Library:CreateWindow(settings)
 			end
 
 			local Toggle = {}
+			table.insert(allToggles, Toggle)
 
 			-- Loop: runs over and over while the toggle is on
 			local function startLoop()
@@ -3016,6 +3108,32 @@ function Library:CreateWindow(settings)
 			end
 		end,
 	})
+	SettingsTab:CreateToggle({
+		Name = "Anonymous Mode",
+		Flag = "__global_Anonymous",
+		CurrentValue = Library.Anonymous,
+		Callback = function(v)
+			Library:SetAnonymous(v)
+		end,
+	})
+	do
+		local armedAt = 0
+		SettingsTab:CreateButton({
+			Name = "Unload Script",
+			Callback = function()
+				if os.clock() - armedAt < 3 then
+					Library:Unload()
+				else
+					armedAt = os.clock()
+					Library:Notify({
+						Title = "Unload Script",
+						Content = "Press again within 3 seconds to turn everything off and close the GUI.",
+						Duration = 3,
+					})
+				end
+			end,
+		})
+	end
 	if globalFiles then
 		SettingsTab:CreateLabel("Appearance: shared across scripts  -  " .. Library.GlobalSettingsFile)
 	else
@@ -3478,7 +3596,7 @@ function Library:CreateLoader(settings)
 
 	-- Avatar picture + streamer mode (hides name, username and picture)
 	local avatarImage = ""
-	local streamer = settings.StreamerMode == true
+	local streamer = Library.Anonymous or settings.StreamerMode == true
 	local function applyStreamer()
 		nameLabel.Text = streamer and "HIDDEN" or string.upper(player.DisplayName)
 		userLabel.Text = streamer and "@hidden" or ("@" .. player.Name)
@@ -3638,6 +3756,7 @@ function Library:CreateLoader(settings)
 	local smClick = create("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", Parent = smCard })
 	smClick.MouseButton1Click:Connect(function()
 		streamer = not streamer
+		Library:SetAnonymous(streamer) -- remembered for every window and every script
 		paintToggle(true)
 		applyStreamer()
 		fire(settings.OnStreamerMode, streamer)
@@ -3645,6 +3764,7 @@ function Library:CreateLoader(settings)
 	applyStreamer()
 	function Loader:SetStreamerMode(v)
 		streamer = v == true
+		Library:SetAnonymous(streamer)
 		paintToggle(true)
 		applyStreamer()
 	end
