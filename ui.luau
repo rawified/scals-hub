@@ -3297,7 +3297,11 @@ function Library:CreateLoader(settings)
 		Visible = false,
 		Active = true,
 		ZIndex = 10,
-		ScrollBarThickness = 2,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		ScrollBarThickness = 3,
+		ScrollBarImageTransparency = 0.3,
+		VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar, -- options never sit under the bar
+		ElasticBehavior = Enum.ElasticBehavior.Never,
 		CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		Bind = { BackgroundColor3 = "Element", ScrollBarImageColor3 = "SubText" },
@@ -3320,18 +3324,46 @@ function Library:CreateLoader(settings)
 
 	local optionButtons = {}
 	local open = false
-	local function listHeight()
-		local n = math.min(#options, 4)
-		return n * 34 + math.max(n - 1, 0) * 2 + 8
+	-- The list scrolls once there are more options than fit. It opens downward, or upward
+	-- (over the info card) when there's more room above, so it's never cut off by the window edge.
+	local ROW_H, ROW_GAP = 34, 2
+	local function heightFor(rows)
+		return rows * ROW_H + math.max(rows - 1, 0) * ROW_GAP + 8
+	end
+	local function rowsThatFit(space)
+		return math.max(math.floor((space - 8 + ROW_GAP) / (ROW_H + ROW_GAP)), 1)
+	end
+	local listHeight = 0
+	local function placeList()
+		local n = #options
+		local below = math.min(n, rowsThatFit(H - (rowY + 60) - 12))
+		local above = math.min(n, rowsThatFit(rowY - 6 - 22))
+		if below >= n or below >= above then
+			list.AnchorPoint = Vector2.new(0, 0)
+			list.Position = UDim2.new(0.5, 6, 0, rowY + 60)
+			listHeight = heightFor(below)
+		else
+			list.AnchorPoint = Vector2.new(0, 1)
+			list.Position = UDim2.new(0.5, 6, 0, rowY - 6)
+			listHeight = heightFor(above)
+		end
 	end
 	local function setOpen(v)
 		v = v and #options > 0
 		if v == open then return end
 		open = v
 		if open then
+			placeList()
 			list.Visible = true
 			list.Size = UDim2.new(0.5, -6, 0, 0)
-			tween(list, { Size = UDim2.new(0.5, -6, 0, listHeight()) }, 0.22, Enum.EasingStyle.Quint)
+			-- scroll so the selected option is in view
+			local index = 1
+			for i, opt in ipairs(options) do
+				if opt == current then index = i break end
+			end
+			local maxScroll = math.max(heightFor(#options) - listHeight, 0)
+			list.CanvasPosition = Vector2.new(0, math.clamp((index - 1) * (ROW_H + ROW_GAP) - ROW_H, 0, maxScroll))
+			tween(list, { Size = UDim2.new(0.5, -6, 0, listHeight) }, 0.22, Enum.EasingStyle.Quint)
 		else
 			local t = tween(list, { Size = UDim2.new(0.5, -6, 0, 0) }, 0.15)
 			t.Completed:Connect(function()
