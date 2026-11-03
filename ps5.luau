@@ -31,9 +31,22 @@
 			Title = "Murder Mystery 2",        -- big title on the page (defaults to the tab name)
 			Description = "Auto farm, ESP and more",
 			Section = "Items",                 -- heading over the first row of cards
-			ButtonText = "Explore",            -- white button under the title, scrolls down to the items
+			ButtonText = "Explore",            -- button under the title, scrolls down to the items
+			PlaceId = 142823291,               -- adds a white Play button that teleports you to that game
+			                                   -- ("Rejoin" when you're already in it)
+			Premium = true,                    -- only premium users can use anything on this tab
 		})
 		Window:CreateTab("Name", "rbxassetid://123") also works (just an image).
+
+	PREMIUM: put Premium = true on a tab, a toggle or a button. For everyone else the tile gets a gold
+	lock, the cards are dimmed with a "PREMIUM" tag, and clicks / hotkeys only show a notification.
+	A locked toggle never runs (even if it was saved as on), and switches off if premium is lost.
+	Who is premium: getgenv().GuiLibraryUser = { Premium = true } (set by the loader after the key
+	check), or Premium = true/false in CreateWindow, or Window:SetPremium(bool). Window:IsPremium().
+	CreateWindow({ PremiumText = "Get a premium key on our Discord." }) changes the notification text.
+
+	TELEPORT: CreateWindow({ QueueOnTeleport = 'loadstring(game:HttpGet("...loader.lua"))()' }) runs
+	that code again in the new server (needs queue_on_teleport in your executor), so the hub comes back.
 
 	ITEMS = the cards under each tab (the "community" row). Every element is a card and every one
 	accepts an optional Flag = "SaveName" and Description = "small text under the name".
@@ -364,6 +377,35 @@ local function closeGlyph(parent, size, color)
 		table.insert(lines, ln)
 	end
 	return lines
+end
+
+-- Small padlock: shackle (outlined arch) + body
+local function padlock(parent, size, color, order)
+	local box = create("Frame", {
+		Size = UDim2.fromOffset(size, size),
+		BackgroundTransparency = 1,
+		LayoutOrder = order or 0,
+		Parent = parent,
+	})
+	local shackle = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromScale(0.5, 0.02),
+		Size = UDim2.fromScale(0.58, 0.62),
+		BackgroundTransparency = 1,
+		Parent = box,
+	})
+	corner(shackle, math.floor(size * 0.3))
+	stroke(shackle, color, math.max(1.5, size / 8), 0)
+	local body = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.fromScale(0.5, 1),
+		Size = UDim2.fromScale(0.86, 0.56),
+		BackgroundColor3 = color,
+		BorderSizePixel = 0,
+		Parent = box,
+	})
+	corner(body, math.max(2, math.floor(size / 7)))
+	return box
 end
 
 ----------------------------------------------------------------------
@@ -1437,12 +1479,91 @@ function Library:CreateWindow(settings)
 		end
 	end)
 	local premiumLocked = type(settings.Premium) == "boolean"
-	local isPremium = premiumLocked and settings.Premium or detectPremium()
+	local isPremium
+	if premiumLocked then isPremium = settings.Premium else isPremium = detectPremium() end
 	badge.Visible = isPremium
+	-- everything that is locked to premium re-checks itself when this changes
+	local premiumListeners = {}
+	local function onPremium(fn)
+		table.insert(premiumListeners, fn)
+	end
+	local function setPremiumState(v)
+		v = v == true
+		if v == isPremium then return end
+		isPremium = v
+		badge.Visible = v
+		for _, fn in ipairs(premiumListeners) do
+			task.spawn(fn, v)
+		end
+	end
 	function Window:SetPremium(v)
 		premiumLocked = true
-		isPremium = v == true
-		badge.Visible = isPremium
+		setPremiumState(v)
+	end
+	function Window:IsPremium()
+		return isPremium
+	end
+
+	------------------------------------------------------------------
+	-- Teleport (Play button)
+	------------------------------------------------------------------
+	local TeleportService = game:GetService("TeleportService")
+	local teleportReset -- set while a teleport is in progress: puts the button back and says why
+	local function teleportTo(placeId, button, label)
+		if teleportReset then return end
+		local original = button.Text
+		local reset
+		reset = function(msg)
+			if teleportReset ~= reset then return end
+			teleportReset = nil
+			if button.Parent then button.Text = original end
+			if msg then
+				Library:Notify({ Title = "Teleport failed", Content = tostring(msg), Duration = 5 })
+			end
+		end
+		teleportReset = reset
+		button.Text = "Teleporting..."
+		Library:Notify({ Title = "Teleporting", Content = "Joining " .. label .. "...", Duration = 4 })
+		if type(settings.QueueOnTeleport) == "string" then
+			local q = (typeof(queue_on_teleport) == "function" and queue_on_teleport)
+				or (typeof(queueonteleport) == "function" and queueonteleport)
+				or (type(syn) == "table" and syn.queue_on_teleport)
+			if q then pcall(q, settings.QueueOnTeleport) end
+		end
+		local ok, err = pcall(function()
+			TeleportService:Teleport(placeId, player)
+		end)
+		if not ok then
+			reset(err)
+			return
+		end
+		task.delay(20, function() reset("Timed out, try again.") end)
+	end
+	track(TeleportService.TeleportInitFailed:Connect(function(plr, _, msg)
+		if plr ~= player or not teleportReset then return end
+		teleportReset((msg and msg ~= "") and msg or "Roblox couldn't start the teleport.")
+	end))
+
+	-- Locked thing pressed: little shake + a (rate limited) notification
+	local lastDenied = 0
+	local function denied(target)
+		sfx("Select")
+		if target then
+			task.spawn(function()
+				for _, x in ipairs({ 9, -7, 5, -3, 0 }) do
+					target.Position = UDim2.new(0.5, x, 0.5, 0)
+					task.wait(0.035)
+				end
+			end)
+		end
+		if os.clock() - lastDenied > 2 then
+			lastDenied = os.clock()
+			Library:Notify({
+				Title = "Premium only",
+				Content = settings.PremiumText or "Get a premium key to unlock this.",
+				Duration = 3,
+			})
+		end
 	end
 
 	------------------------------------------------------------------
@@ -1882,11 +2003,7 @@ function Library:CreateWindow(settings)
 			lastSecond = t
 			clock.Text = os.date("%H:%M")
 			if not premiumLocked then
-				local now = detectPremium()
-				if now ~= isPremium then
-					isPremium = now
-					badge.Visible = now
-				end
+				setPremiumState(detectPremium())
 			end
 		end
 	end))
@@ -1921,7 +2038,12 @@ function Library:CreateWindow(settings)
 			background = resolveImage(opts.Background),
 			nameW = estimateWidth(name, 20),
 			cards = {},
+			premium = opts.Premium == true,
 		}
+		-- true when this thing needs premium and the user doesn't have it
+		local function isLocked(o)
+			return (e.premium or (o and o.Premium == true)) and not isPremium
+		end
 
 		-- Tile
 		local tile = create("TextButton", {
@@ -1979,6 +2101,25 @@ function Library:CreateWindow(settings)
 		corner(ring, 16)
 		e.ringStroke = stroke(ring, WHITE, 2.5, 1)
 		e.tile, e.tileDim = tile, tileDim
+		if e.premium then
+			-- gold lock in the corner of the tile while it's locked
+			local lockBadge = create("Frame", {
+				AnchorPoint = Vector2.new(1, 0),
+				Position = UDim2.new(1, -5, 0, 5),
+				Size = UDim2.fromOffset(20, 20),
+				BackgroundColor3 = Col.Gold,
+				BorderSizePixel = 0,
+				Parent = tile,
+			})
+			round(lockBadge)
+			stroke(lockBadge, Color3.fromRGB(10, 12, 20), 1.5, 0)
+			local lockIcon = padlock(lockBadge, 10, Color3.fromRGB(40, 28, 0))
+			lockIcon.AnchorPoint = CENTER
+			lockIcon.Position = UDim2.fromScale(0.5, 0.5)
+			local function refresh() lockBadge.Visible = isLocked() end
+			refresh()
+			onPremium(refresh)
+		end
 		local tileScale = create("UIScale", { Parent = tile })
 		tile.MouseEnter:Connect(function()
 			if selected ~= e then
@@ -2079,37 +2220,112 @@ function Library:CreateWindow(settings)
 			BackgroundTransparency = 1,
 			Parent = hero,
 		})
-		local playSlot = create("Frame", { Size = UDim2.fromOffset(170, 46), BackgroundTransparency = 1, Parent = heroButtons })
-		local playGlow = softGlow(playSlot, 12, WHITE, 4, 4)
-		local play = create("TextButton", {
-			Size = UDim2.fromScale(1, 1),
-			BackgroundColor3 = WHITE,
-			AutoButtonColor = false,
-			Text = opts.ButtonText or "Explore",
-			FontFace = font(Enum.FontWeight.SemiBold),
-			TextSize = 18,
-			TextColor3 = BLACK,
-			Parent = playSlot,
+		create("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			Padding = UDim.new(0, 14),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Parent = heroButtons,
 		})
-		corner(play, 12)
-		local playScale = create("UIScale", { Parent = playSlot })
-		play.MouseEnter:Connect(function()
-			sfx("Move")
-			tween(playScale, { Scale = 1.05 }, 0.25)
-			glowTo(playGlow, 1)
-		end)
-		play.MouseLeave:Connect(function()
-			tween(playScale, { Scale = 1 }, 0.25)
-			glowTo(playGlow, 0)
-		end)
-		play.MouseButton1Click:Connect(function()
-			sfx("Select")
-			tween(playScale, { Scale = 0.96 }, 0.08)
-			task.delay(0.08, function() tween(playScale, { Scale = 1.05 }, 0.3, Enum.EasingStyle.Back) end)
+		-- primary = white (like the console's Play), otherwise dark and turns white when hovered
+		local function heroButton(label, primary, order, width)
+			local slot = create("Frame", {
+				Size = UDim2.fromOffset(width, 46),
+				BackgroundTransparency = 1,
+				LayoutOrder = order,
+				Parent = heroButtons,
+			})
+			local glow = softGlow(slot, 12, WHITE, 4, 4)
+			local b = create("TextButton", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundColor3 = primary and WHITE or BLACK,
+				BackgroundTransparency = primary and 0 or 0.45,
+				AutoButtonColor = false,
+				Text = label,
+				FontFace = font(Enum.FontWeight.SemiBold),
+				TextSize = 18,
+				TextColor3 = primary and BLACK or WHITE,
+				Parent = slot,
+			})
+			corner(b, 12)
+			if not primary then stroke(b, WHITE, 1, 0.8) end
+			local sc = create("UIScale", { Parent = slot })
+			b.MouseEnter:Connect(function()
+				sfx("Move")
+				tween(sc, { Scale = 1.05 }, 0.25)
+				glowTo(glow, 1)
+				if not primary then
+					tween(b, { BackgroundColor3 = WHITE, BackgroundTransparency = 0, TextColor3 = BLACK }, 0.15)
+				end
+			end)
+			b.MouseLeave:Connect(function()
+				tween(sc, { Scale = 1 }, 0.25)
+				glowTo(glow, 0)
+				if not primary then
+					tween(b, { BackgroundColor3 = BLACK, BackgroundTransparency = 0.45, TextColor3 = WHITE }, 0.15)
+				end
+			end)
+			local function pop()
+				sfx("Select")
+				tween(sc, { Scale = 0.96 }, 0.08)
+				task.delay(0.08, function() tween(sc, { Scale = 1.05 }, 0.3, Enum.EasingStyle.Back) end)
+			end
+			return b, pop
+		end
+
+		-- Play: teleports to the tab's game (Rejoin when you're already there)
+		local placeId = tonumber(opts.PlaceId)
+		if placeId then
+			local playBtn, playPop = heroButton(game.PlaceId == placeId and "Rejoin" or "Play", true, 1, 150)
+			playBtn.MouseButton1Click:Connect(function()
+				playPop()
+				teleportTo(placeId, playBtn, opts.Title or name)
+			end)
+		end
+		local exploreBtn, explorePop = heroButton(opts.ButtonText or "Explore", placeId == nil, 2, 150)
+		exploreBtn.MouseButton1Click:Connect(function()
+			explorePop()
 			tween(page, { CanvasPosition = Vector2.new(0, HERO_H - 4) }, 0.7)
 		end)
+		if e.premium then
+			local premiumChip = create("Frame", {
+				Size = UDim2.fromOffset(0, 46),
+				AutomaticSize = Enum.AutomaticSize.X,
+				BackgroundColor3 = Col.Gold,
+				BackgroundTransparency = 0.82,
+				LayoutOrder = 4,
+				Parent = heroButtons,
+			})
+			corner(premiumChip, 12)
+			stroke(premiumChip, Col.Gold, 1, 0.4)
+			create("UIPadding", { PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16), Parent = premiumChip })
+			create("UIListLayout", {
+				FillDirection = Enum.FillDirection.Horizontal,
+				VerticalAlignment = Enum.VerticalAlignment.Center,
+				Padding = UDim.new(0, 8),
+				SortOrder = Enum.SortOrder.LayoutOrder,
+				Parent = premiumChip,
+			})
+			local chipLock = padlock(premiumChip, 14, Col.Gold, 1)
+			local chipText = text(premiumChip, {
+				Size = UDim2.fromOffset(0, 46),
+				AutomaticSize = Enum.AutomaticSize.X,
+				Text = "",
+				FontFace = font(Enum.FontWeight.SemiBold),
+				TextSize = 15,
+				TextColor3 = Col.Gold,
+				LayoutOrder = 2,
+			})
+			local function refresh()
+				local locked = isLocked()
+				chipLock.Visible = locked
+				chipText.Text = locked and "Premium only" or "★ Premium"
+			end
+			refresh()
+			onPremium(refresh)
+		end
 		local countChip = create("TextLabel", {
-			Position = UDim2.fromOffset(186, 0),
+			LayoutOrder = 3,
 			Size = UDim2.fromOffset(0, 46),
 			AutomaticSize = Enum.AutomaticSize.X,
 			BackgroundColor3 = BLACK,
@@ -2312,6 +2528,54 @@ function Library:CreateWindow(settings)
 					end
 				end,
 			}
+			-- Premium lock: dims the card, adds a gold PREMIUM tag and swallows every click on it
+			-- (ZIndex 10, so it sits above whatever the element adds to the card afterwards)
+			card.locked = function() return isLocked(o) end
+			if e.premium or o.Premium == true then
+				local lockLayer = create("TextButton", {
+					Size = UDim2.fromScale(1, 1),
+					BackgroundColor3 = BLACK,
+					BackgroundTransparency = 0.45,
+					AutoButtonColor = false,
+					Text = "",
+					ZIndex = 10,
+					Parent = face,
+				})
+				corner(lockLayer, 14)
+				local tag = create("Frame", {
+					AnchorPoint = Vector2.new(1, 0),
+					Position = UDim2.new(1, -12, 0, 12),
+					Size = UDim2.fromOffset(0, 22),
+					AutomaticSize = Enum.AutomaticSize.X,
+					BackgroundColor3 = Col.Gold,
+					BorderSizePixel = 0,
+					Parent = lockLayer,
+				})
+				corner(tag, 6)
+				create("UIPadding", { PaddingLeft = UDim.new(0, 7), PaddingRight = UDim.new(0, 8), Parent = tag })
+				create("UIListLayout", {
+					FillDirection = Enum.FillDirection.Horizontal,
+					VerticalAlignment = Enum.VerticalAlignment.Center,
+					Padding = UDim.new(0, 5),
+					SortOrder = Enum.SortOrder.LayoutOrder,
+					Parent = tag,
+				})
+				padlock(tag, 10, Color3.fromRGB(40, 28, 0), 1)
+				text(tag, {
+					Size = UDim2.fromOffset(0, 22),
+					AutomaticSize = Enum.AutomaticSize.X,
+					Text = "PREMIUM",
+					FontFace = font(Enum.FontWeight.Bold),
+					TextSize = 11,
+					TextColor3 = Color3.fromRGB(40, 28, 0),
+					LayoutOrder = 2,
+				})
+				lockLayer.MouseButton1Click:Connect(function() denied(cardHolder) end)
+				lockLayer.MouseButton2Click:Connect(function() denied(cardHolder) end)
+				local function refresh() lockLayer.Visible = isLocked(o) end
+				refresh()
+				onPremium(refresh)
+			end
 			table.insert(e.cards, card)
 			return card
 		end
@@ -2349,7 +2613,14 @@ function Library:CreateWindow(settings)
 			end
 			fitTitle()
 
-			local entry = { key = key, action = action, inst = chip }
+			local function guarded()
+				if card.locked() then
+					denied(card.holder)
+					return
+				end
+				action()
+			end
+			local entry = { key = key, action = guarded, inst = chip }
 			table.insert(keyBinds, entry)
 			local function setKey(k)
 				key = k or Enum.KeyCode.Unknown
@@ -2512,6 +2783,7 @@ function Library:CreateWindow(settings)
 			function Toggle:Set(v, silent)
 				v = v == true
 				if v == value then return end
+				if v and card.locked() then return end -- premium-only: can't be switched on
 				value = v
 				paint(true)
 				changed(flag, v)
@@ -2529,6 +2801,11 @@ function Library:CreateWindow(settings)
 			card.hit.MouseButton1Click:Connect(flip)
 			local bind = attachBind(o, flag, card, flip)
 			Toggle.SetBind = function(_, k) bind.Set(k) end
+			-- saved as on but locked now: show it off and don't run it (the saved value is kept)
+			if value and card.locked() then value = false end
+			onPremium(function()
+				if value and card.locked() then Toggle:Set(false) end
+			end)
 			paint(false)
 			if value then
 				task.defer(function()
@@ -2848,7 +3125,7 @@ function Library:CreateWindow(settings)
 				end)
 			end)
 			local pressConn = UserInputService.InputBegan:Connect(function(input, processed)
-				if processed or listeningForKey then return end
+				if processed or listeningForKey or card.locked() then return end
 				if key ~= Enum.KeyCode.Unknown and input.KeyCode == key then
 					fire(o.Callback, key)
 				end
