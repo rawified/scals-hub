@@ -71,6 +71,9 @@
 	LOADER: Library:CreateLoader({...}) - console-style sign-in (user screen -> key screen -> script tiles),
 	same options and methods as GuiLibrary's CreateLoader. Full list above the function, near the end.
 
+	ACCOUNT MENU: click your picture (top right): Change Key, Hide my info, Sign Out, Unload.
+	CreateWindow({ ChangeKey = function() end, SignOut = function() end }) adds those two entries.
+
 	Window:SetVisible(bool) / :Toggle() / :SetToggleKey(KeyCode) / :SelectTab(name) / :Destroy()
 	Library:Notify({Title, Content, Duration, Icon = "rbxassetid://..."})
 	Library:Unload() / Library:OnUnload(fn) / Library:SetAnonymous(bool)
@@ -1450,7 +1453,26 @@ function Library:CreateWindow(settings)
 		Parent = avatarWrap,
 	})
 	round(avatar)
-	stroke(avatar, WHITE, 1.5, 0.6)
+	local avatarRing = stroke(avatar, WHITE, 1.5, 0.6)
+	-- click your picture: account menu (Change Key / Hide my info / Sign Out / Unload)
+	local accountHit = create("TextButton", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		ZIndex = 3,
+		Parent = avatarWrap,
+	})
+	local accountScale = create("UIScale", { Parent = avatarWrap })
+	accountHit.MouseEnter:Connect(function()
+		sfx("Move")
+		tween(avatarRing, { Transparency = 0, Thickness = 2 }, 0.15)
+		tween(accountScale, { Scale = 1.1 }, 0.2)
+	end)
+	accountHit.MouseLeave:Connect(function()
+		tween(avatarRing, { Transparency = 0.6, Thickness = 1.5 }, 0.15)
+		tween(accountScale, { Scale = 1 }, 0.2)
+	end)
 	local badge = create("Frame", {
 		AnchorPoint = CENTER,
 		Position = UDim2.new(1, -3, 1, -3),
@@ -1837,6 +1859,27 @@ function Library:CreateWindow(settings)
 		tween(panelScale, { Scale = 1 }, 0.35)
 	end
 	scrim.MouseButton1Click:Connect(closeMenu)
+
+	-- Account menu (your picture, top right). Sign Out only shows when the script passes SignOut.
+	accountHit.MouseButton1Click:Connect(function()
+		sfx("Select")
+		local actions, labels = {}, {}
+		local function add(label, fn)
+			table.insert(labels, label)
+			actions[label] = fn
+		end
+		if type(settings.ChangeKey) == "function" then add("Change Key", settings.ChangeKey) end
+		add(Library.Anonymous and "Show my info" or "Hide my info", function()
+			Library:SetAnonymous(not Library.Anonymous)
+		end)
+		if type(settings.SignOut) == "function" then add("Sign Out", settings.SignOut) end
+		add("Unload", function() Library:Unload() end)
+		local who = Library.Anonymous and "Player" or (player.DisplayName ~= "" and player.DisplayName or player.Name)
+		openMenu(who .. (isPremium and "  ★" or ""), labels, nil, function(label)
+			local fn = actions[label]
+			if fn then task.spawn(fn) end
+		end)
+	end)
 
 	------------------------------------------------------------------
 	-- Tabs: selection, tile layout, page swap
