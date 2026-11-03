@@ -8,7 +8,8 @@
 			Name = "Scals Hub",
 			ToggleKey = Enum.KeyCode.RightShift,
 			Accent = Color3.fromRGB(0, 112, 220),   -- toggles, sliders, notifications
-			Fullscreen = false,                     -- true = takes the whole screen like the real thing
+			Fullscreen = false,                     -- true = takes the whole screen (users can change it in Settings)
+			Theme = "Cosmic Blue",                  -- default background theme (users can change it in Settings)
 			Blur = true,                            -- blurs the game behind the window (windowed only)
 			Scale = 1,                              -- max size; it always shrinks to fit the screen
 			ConfigurationSaving = { Enabled = true, FolderName = "ScalsHub", FileName = "Settings" },
@@ -36,7 +37,7 @@
 			ForGame = { 142823291 },           -- which game this tile is for (ids or a function), used to
 			                                   -- put it first and open on it when you're in that game.
 			                                   -- Defaults to Game / PlaceId. Tiles without any = universal:
-			                                   -- order is your game, universal tiles, other games, Settings.
+			                                   -- order is your game, universal tiles, then other games.
 			                                   -- ("Rejoin" when you're already in it)
 			Premium = true,                    -- only premium users can use anything on this tab
 		})
@@ -77,13 +78,22 @@
 
 	ACCOUNT MENU: click your picture (top right): Change Key, Hide my info, Sign Out, Unload.
 	CreateWindow({ ChangeKey = function() end, SignOut = function() end }) adds those two entries.
+	Your name shows next to your picture; premium users get a gold shimmer + glow on it.
+
+	SETTINGS: not a tile. "Settings" next to "Games" (top left) opens the console-style Settings screen:
+	System, Screen and Video (Full Screen, Window Size, Blur, Motion), Themes, Account, Saved Data, Unload.
+	Escape / Backspace goes back. Window:OpenSettings() / :CloseSettings() / :SelectTab("Settings").
+
+	THEMES: Game Colours, Cosmic Blue, Slate, Midnight, Aurora, Ocean, Forest, Sunset, Crimson, Sakura,
+	Gold, Synthwave, Mono. Each mixes light rays, particle waves, stars, aurora, petals and a horizon grid.
+	Window:SetTheme("Aurora") / Window:SetFullscreen(bool). Library.Themes lists them.
 
 	Window:SetVisible(bool) / :Toggle() / :SetToggleKey(KeyCode) / :SelectTab(name) / :Destroy()
 	Library:Notify({Title, Content, Duration, Icon = "rbxassetid://...", Prefix = "🏆"})
 	Library:Unload() / Library:OnUnload(fn) / Library:SetAnonymous(bool)
 
-	Shared with every script that uses this library (Settings tile, saved in GuiLibrary/PS5Settings.json):
-	toggle key, sounds, background motion, blur, Anti AFK, Anonymous mode.
+	Shared with every script that uses this library (Settings, saved in GuiLibrary/PS5Settings.json):
+	toggle key, sounds, Anti AFK, full screen, window size, blur, background motion, theme, Anonymous mode.
 	Premium badge on the avatar: reads getgenv().GuiLibraryUser = { Premium = true } like GuiLibrary.
 ]]
 
@@ -123,6 +133,32 @@ local Col = {
 	Gold = Color3.fromRGB(255, 196, 64),
 	Error = Color3.fromRGB(240, 95, 95),
 }
+
+-- Background themes (Settings > Themes). Weights (0-1) pick how much of each background detail shows.
+--	Game: each tile's own colours. C1 / C2: light / dark colour. Glow: rays, particles, stars.
+local function rgb(r, g, b) return Color3.fromRGB(r, g, b) end
+local Themes = {
+	{ Name = "Game Colours", Game = true, Rays = 0.6, Waves = 0.7, Stars = 0.35, Aurora = 0.35, Orbs = 1 },
+	{ Name = "Cosmic Blue", C1 = rgb(90, 150, 255), C2 = rgb(10, 30, 92), Glow = rgb(150, 195, 255), Rays = 0.7, Waves = 1, Stars = 0.5, Aurora = 0.4, Orbs = 0.8 },
+	{ Name = "Slate", C1 = rgb(120, 128, 146), C2 = rgb(16, 20, 30), Glow = rgb(236, 230, 218), Rays = 1, Waves = 0.35, Stars = 0.2, Aurora = 0, Orbs = 0.3 },
+	{ Name = "Midnight", C1 = rgb(64, 74, 120), C2 = rgb(5, 7, 18), Glow = rgb(180, 190, 240), Rays = 0.3, Waves = 0.45, Stars = 1, Aurora = 0.25, Orbs = 0.4 },
+	{ Name = "Aurora", C1 = rgb(70, 230, 170), C2 = rgb(5, 26, 46), Glow = rgb(130, 255, 205), Rays = 0.2, Waves = 0.5, Stars = 0.85, Aurora = 1, Orbs = 0.35 },
+	{ Name = "Ocean", C1 = rgb(60, 210, 240), C2 = rgb(4, 30, 72), Glow = rgb(165, 240, 255), Rays = 0.85, Waves = 1, Stars = 0.2, Aurora = 0.4, Orbs = 0.7 },
+	{ Name = "Forest", C1 = rgb(115, 200, 110), C2 = rgb(7, 32, 18), Glow = rgb(210, 255, 175), Rays = 0.95, Waves = 0.35, Stars = 0.3, Aurora = 0.3, Orbs = 0.6, Petals = 0.5 },
+	{ Name = "Sunset", C1 = rgb(255, 150, 90), C2 = rgb(88, 20, 70), Glow = rgb(255, 205, 150), Rays = 0.9, Waves = 0.7, Stars = 0.2, Aurora = 0.5, Orbs = 0.8 },
+	{ Name = "Crimson", C1 = rgb(240, 70, 82), C2 = rgb(38, 4, 12), Glow = rgb(255, 150, 150), Rays = 0.6, Waves = 0.85, Stars = 0.3, Aurora = 0.3, Orbs = 0.9 },
+	{ Name = "Sakura", C1 = rgb(255, 150, 210), C2 = rgb(70, 20, 82), Glow = rgb(255, 205, 236), Rays = 0.5, Waves = 0.6, Stars = 0.4, Aurora = 0.6, Orbs = 0.8, Petals = 1 },
+	{ Name = "Gold", C1 = rgb(255, 200, 90), C2 = rgb(30, 20, 6), Glow = rgb(255, 222, 155), Rays = 0.85, Waves = 0.6, Stars = 0.6, Aurora = 0.2, Orbs = 0.7 },
+	{ Name = "Synthwave", C1 = rgb(255, 80, 200), C2 = rgb(20, 6, 52), Glow = rgb(110, 230, 255), Rays = 0.25, Waves = 0.8, Stars = 0.9, Aurora = 0.6, Orbs = 0.5, Grid = 1 },
+	{ Name = "Mono", C1 = rgb(180, 180, 186), C2 = rgb(14, 14, 16), Glow = rgb(255, 255, 255), Rays = 0.6, Waves = 0.6, Stars = 0.4, Aurora = 0, Orbs = 0.5 },
+}
+Library.Themes = Themes
+local function themeByName(n)
+	for _, t in ipairs(Themes) do
+		if t.Name == n then return t end
+	end
+	return nil
+end
 
 local BASE_W, BASE_H = 1000, 562 -- design size (16:9); scaled to fit the screen
 local PAD = 48                   -- left / right margin
@@ -1112,8 +1148,13 @@ function Library:CreateWindow(settings)
 	local accent = Library.Accent
 	local player = Players.LocalPlayer
 	local windowName = settings.Name or "Hub"
+	-- Full Screen and Theme can be changed in Settings; the saved choice wins over the script's default
 	local fullscreen = settings.Fullscreen == true
+	if type(globalSettings.Fullscreen) == "boolean" then fullscreen = globalSettings.Fullscreen end
 	local blurWanted = settings.Blur ~= false
+	local currentTheme = themeByName(globalSettings.Theme) or themeByName(settings.Theme) or Themes[1]
+	local SIZES = { Small = 0.8, Medium = 0.9, Large = 1 }
+	local windowSize = SIZES[globalSettings.WindowSize] and globalSettings.WindowSize or "Large"
 
 	local Window = {}
 	local visible = false
@@ -1223,7 +1264,7 @@ function Library:CreateWindow(settings)
 	local screenCorner = corner(screen, fullscreen and 0 or 18)
 
 	local blur
-	if blurWanted and not fullscreen then
+	if blurWanted then
 		blur = Instance.new("BlurEffect")
 		blur.Name = "PS5LibraryBlur"
 		blur.Size = 0
@@ -1291,20 +1332,320 @@ function Library:CreateWindow(settings)
 	end
 	local bgLayers = { makeBgLayer(), makeBgLayer() }
 	local bgFront = 1
+
+	------------------------------------------------------------------
+	-- Background detail, tinted by the theme: light rays, particle waves, stars, aurora,
+	-- petals and a horizon grid. Each theme says how much of each one shows.
+	------------------------------------------------------------------
+	local detail = create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = screen })
+	local function group()
+		return create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = detail })
+	end
+	local fx = { w = {} } -- w = current weights
+
+	-- aurora: wide soft bands across the top
+	fx.auroraGroup = group()
+	fx.aurora = {}
+	for i = 1, 3 do
+		local band = create("Frame", {
+			AnchorPoint = CENTER,
+			Position = UDim2.fromScale(0.5, 0.18 + i * 0.09),
+			Size = UDim2.new(1.7, 0, 0.2 + i * 0.03, 0),
+			Rotation = -12 + i * 5,
+			BackgroundColor3 = WHITE,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Parent = fx.auroraGroup,
+		})
+		local g = create("UIGradient", {
+			Rotation = 90,
+			Transparency = NumberSequence.new({ nk(0, 1), nk(0.45, 0.25), nk(0.55, 0.25), nk(1, 1) }),
+			Parent = band,
+		})
+		fx.aurora[i] = { f = band, g = g, a = 0.16 - i * 0.03, ph = i * 2.1, y = 0.18 + i * 0.09, rot = -12 + i * 5 }
+	end
+
+	-- stars: tiny twinkling dots, mostly in the top half
+	fx.starGroup = group()
+	fx.stars = {}
+	for i = 1, 70 do
+		local sz = (i % 7 == 0) and 3 or ((i % 3 == 0) and 2 or 1)
+		local f = create("Frame", {
+			AnchorPoint = CENTER,
+			Position = UDim2.fromScale(math.random(), math.random() ^ 1.6 * 0.85),
+			Size = UDim2.fromOffset(sz, sz),
+			BackgroundColor3 = WHITE,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Parent = fx.starGroup,
+		})
+		round(f)
+		fx.stars[i] = { f = f, a = 0.25 + math.random() * 0.55, tw = 0.5 + math.random() * 2.2, ph = math.random() * 6.28 }
+	end
+
+	-- light rays from the top left (like the console's Settings screen)
+	fx.rayGroup = group()
+	fx.rays = {}
+	for i = 1, 8 do
+		local thick = 24 + ((i * 37) % 5) * 22
+		local ray = create("Frame", {
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0.04, 0, -0.14, 0),
+			Size = UDim2.fromOffset(1700, thick),
+			Rotation = 16 + i * 6.5,
+			BackgroundColor3 = WHITE,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Parent = fx.rayGroup,
+		})
+		local fade = NumberSequence.new({ nk(0, 0.1), nk(0.3, 0.55), nk(0.75, 0.92), nk(1, 1) })
+		create("UIGradient", { Transparency = fade, Parent = ray })
+		local core = create("Frame", { -- brighter middle, so the edges look soft
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.fromScale(0, 0.5),
+			Size = UDim2.fromScale(1, 0.35),
+			BackgroundColor3 = WHITE,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Parent = ray,
+		})
+		create("UIGradient", { Transparency = fade, Parent = core })
+		fx.rays[i] = { f = ray, core = core, rot = 16 + i * 6.5, a = 0.03 + (i % 3) * 0.018, ph = i * 1.37 }
+	end
+
+	-- particle waves: strands of dots on moving sine curves (the console's signature waves)
+	fx.waveGroup = group()
+	fx.strands = {}
+	local DOTS = 46
+	for k = 1, 4 do
+		local dots = {}
+		for j = 1, DOTS do
+			local sz = (j % 4 == 0) and 4 or ((j % 2 == 0) and 3 or 2)
+			local f = create("Frame", {
+				AnchorPoint = CENTER,
+				Size = UDim2.fromOffset(sz, sz),
+				BackgroundColor3 = WHITE,
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Parent = fx.waveGroup,
+			})
+			round(f)
+			dots[j] = f
+		end
+		fx.strands[k] = { dots = dots, y = 0.6 + k * 0.04, amp = 0.045 + k * 0.012, freq = 4.6 + k * 0.7, speed = 0.22 + k * 0.05, ph = k * 0.9 }
+	end
+
+	-- petals: falling, spinning (Sakura / Forest)
+	fx.petalGroup = group()
+	fx.petals = {}
+	for i = 1, 18 do
+		local f = create("Frame", {
+			AnchorPoint = CENTER,
+			Size = UDim2.fromOffset(7 + (i % 3) * 2, 5 + (i % 2) * 2),
+			BackgroundColor3 = WHITE,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Parent = fx.petalGroup,
+		})
+		corner(f, 4)
+		fx.petals[i] = { f = f, x = math.random(), y = math.random(), vy = 0.025 + math.random() * 0.03, vx = 0.01 + math.random() * 0.015, spin = 30 + math.random() * 90, ph = math.random() * 6.28, a = 0.35 + math.random() * 0.35 }
+	end
+
+	-- horizon grid + sun (Synthwave): rebuilt when the window width changes
+	fx.gridGroup = group()
+	fx.gridLines, fx.gridRows = {}, {}
+	local HORIZON = 0.64
+	local function buildGrid()
+		for _, c in ipairs(fx.gridGroup:GetChildren()) do c:Destroy() end
+		table.clear(fx.gridLines)
+		table.clear(fx.gridRows)
+		local W, H = holder.Size.X.Offset, BASE_H
+		local hy = H * HORIZON
+		fx.sun = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.78),
+			Position = UDim2.new(0.5, 0, HORIZON, 0),
+			Size = UDim2.fromOffset(170, 170),
+			BackgroundColor3 = WHITE,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Parent = fx.gridGroup,
+		})
+		round(fx.sun)
+		fx.sunGrad = create("UIGradient", { Rotation = 90, Parent = fx.sun })
+		fx.horizon = create("Frame", {
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0, 0, HORIZON, 0),
+			Size = UDim2.new(1, 0, 0, 2),
+			BackgroundColor3 = WHITE,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Parent = fx.gridGroup,
+		})
+		create("UIGradient", { Transparency = NumberSequence.new({ nk(0, 1), nk(0.5, 0), nk(1, 1) }), Parent = fx.horizon })
+		for i = -11, 11 do
+			local bx = W / 2 + i * W * 0.1
+			local dx, dy = bx - W / 2, H - hy
+			local len = math.sqrt(dx * dx + dy * dy)
+			local f = create("Frame", {
+				AnchorPoint = CENTER,
+				Position = UDim2.fromOffset(W / 2 + dx / 2, hy + dy / 2),
+				Size = UDim2.fromOffset(len, 1),
+				Rotation = math.deg(math.atan2(dy, dx)),
+				BackgroundColor3 = WHITE,
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Parent = fx.gridGroup,
+			})
+			create("UIGradient", { Transparency = NumberSequence.new({ nk(0, 1), nk(1, 0) }), Parent = f })
+			table.insert(fx.gridLines, f)
+		end
+		for k = 1, 9 do
+			local f = create("Frame", {
+				AnchorPoint = Vector2.new(0, 0.5),
+				Size = UDim2.new(1, 0, 0, 1),
+				BackgroundColor3 = WHITE,
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Parent = fx.gridGroup,
+			})
+			table.insert(fx.gridRows, { f = f, p = (k - 1) / 9 })
+		end
+		fx.gridBuilt = true
+		if fx.paint then fx.paint() end
+	end
+
+	-- colours + weights for the current theme (glow = rays / particles colour)
+	local function themeColors(e)
+		if currentTheme.Game and e then
+			return e.c1, e.c2, e.c1:Lerp(WHITE, 0.55)
+		end
+		return currentTheme.C1 or Color3.fromRGB(90, 150, 255), currentTheme.C2 or Color3.fromRGB(10, 30, 90), currentTheme.Glow or WHITE
+	end
+	local boostRays = 0 -- the Settings screen turns the rays up
+	fx.paint = function(e)
+		e = e or fx.lastEntry
+		fx.lastEntry = e
+		local c1, c2, glow = themeColors(e)
+		local th = currentTheme
+		fx.w.Rays = math.max(th.Rays or 0, boostRays)
+		fx.w.Waves, fx.w.Stars, fx.w.Aurora = th.Waves or 0, th.Stars or 0, th.Aurora or 0
+		fx.w.Petals, fx.w.Grid = th.Petals or 0, th.Grid or 0
+		fx.rayGroup.Visible = fx.w.Rays > 0
+		fx.waveGroup.Visible = fx.w.Waves > 0
+		fx.starGroup.Visible = fx.w.Stars > 0
+		fx.auroraGroup.Visible = fx.w.Aurora > 0
+		fx.petalGroup.Visible = fx.w.Petals > 0
+		fx.gridGroup.Visible = fx.w.Grid > 0
+		for _, r in ipairs(fx.rays) do
+			r.f.BackgroundColor3 = glow
+			r.core.BackgroundColor3 = glow:Lerp(WHITE, 0.4)
+			r.f.BackgroundTransparency = 1 - r.a * fx.w.Rays
+			r.core.BackgroundTransparency = 1 - r.a * 1.2 * fx.w.Rays
+		end
+		for _, st in ipairs(fx.strands) do
+			for _, d in ipairs(st.dots) do d.BackgroundColor3 = glow end
+		end
+		for _, st in ipairs(fx.stars) do st.f.BackgroundColor3 = glow:Lerp(WHITE, 0.6) end
+		for i, b in ipairs(fx.aurora) do
+			b.f.BackgroundColor3 = WHITE
+			b.g.Color = ColorSequence.new({
+				ck(0, c1), ck(0.5, i == 2 and glow or c1:Lerp(glow, 0.5)), ck(1, c1),
+			})
+			b.f.BackgroundTransparency = 1 - b.a * fx.w.Aurora
+		end
+		for _, pt in ipairs(fx.petals) do
+			pt.f.BackgroundColor3 = glow
+			pt.f.BackgroundTransparency = 1 - pt.a * fx.w.Petals
+		end
+		if fx.gridBuilt then
+			fx.sun.BackgroundTransparency = 1 - 0.85 * fx.w.Grid
+			fx.sunGrad.Color = ColorSequence.new({ ck(0, Color3.fromRGB(255, 220, 120)), ck(1, c1) })
+			fx.sunGrad.Transparency = NumberSequence.new({ nk(0, 0), nk(0.75, 0.15), nk(1, 1) })
+			fx.horizon.BackgroundColor3 = glow
+			fx.horizon.BackgroundTransparency = 1 - 0.8 * fx.w.Grid
+			for _, l in ipairs(fx.gridLines) do
+				l.BackgroundColor3 = c1
+				l.BackgroundTransparency = 1 - 0.55 * fx.w.Grid
+			end
+			for _, r in ipairs(fx.gridRows) do r.f.BackgroundColor3 = c1 end
+		end
+		-- the ring blobs live in the background layers
+		for _, L in ipairs(bgLayers) do
+			for _, b in ipairs(L.blobs) do
+				for _, r in ipairs(b.rings) do
+					r.BackgroundTransparency = 1 - 0.06 * (th.Orbs or 1)
+				end
+			end
+		end
+	end
+	-- moves everything (t = seconds); also run once so it looks right with Background Motion off
+	fx.update = function(t, dt)
+		local W = fx.w
+		if W.Rays > 0 then
+			for _, r in ipairs(fx.rays) do
+				r.f.Rotation = r.rot + math.sin(t * 0.11 + r.ph) * 2.2
+				local pulse = 0.75 + 0.25 * math.sin(t * 0.35 + r.ph)
+				r.f.BackgroundTransparency = 1 - r.a * W.Rays * pulse
+				r.core.BackgroundTransparency = 1 - r.a * 1.2 * W.Rays * pulse
+			end
+		end
+		if W.Waves > 0 then
+			for _, st in ipairs(fx.strands) do
+				for j, d in ipairs(st.dots) do
+					local x = (j - 1) / (DOTS - 1)
+					local y = st.y + math.sin(x * st.freq + t * st.speed + st.ph) * st.amp + math.sin(x * 2.3 - t * 0.17 + st.ph) * 0.03
+					d.Position = UDim2.fromScale(x * 1.04 - 0.02, y)
+					local edge = math.sin(math.pi * x)
+					d.BackgroundTransparency = 1 - W.Waves * 0.6 * edge * (0.55 + 0.45 * math.sin(t * 1.1 + j * 0.45 + st.ph))
+				end
+			end
+		end
+		if W.Stars > 0 then
+			for _, st in ipairs(fx.stars) do
+				st.f.BackgroundTransparency = 1 - W.Stars * st.a * (0.45 + 0.55 * math.sin(t * st.tw + st.ph) ^ 2)
+			end
+		end
+		if W.Aurora > 0 then
+			for _, b in ipairs(fx.aurora) do
+				b.f.Position = UDim2.fromScale(0.5 + math.sin(t * 0.05 + b.ph) * 0.08, b.y + math.sin(t * 0.08 + b.ph) * 0.03)
+				b.f.Rotation = b.rot + math.sin(t * 0.06 + b.ph) * 3
+				b.g.Offset = Vector2.new(0, math.sin(t * 0.2 + b.ph) * 0.12)
+			end
+		end
+		if W.Petals > 0 then
+			for _, pt in ipairs(fx.petals) do
+				pt.y += pt.vy * dt
+				pt.x += pt.vx * dt
+				if pt.y > 1.05 then pt.y = -0.05; pt.x = math.random() * 0.9 - 0.2 end
+				if pt.x > 1.05 then pt.x = -0.05 end
+				pt.f.Position = UDim2.fromScale(pt.x + math.sin(t * 0.8 + pt.ph) * 0.015, pt.y)
+				pt.f.Rotation = (t * pt.spin + pt.ph * 57) % 360
+			end
+		end
+		if W.Grid > 0 and fx.gridBuilt then
+			for _, r in ipairs(fx.gridRows) do
+				local p = (r.p + t * 0.06) % 1
+				r.f.Position = UDim2.new(0, 0, HORIZON + (1 - HORIZON) * p * p, 0)
+				r.f.BackgroundTransparency = 1 - 0.6 * W.Grid * math.min(1, p * 2.5)
+			end
+		end
+	end
+
 	local function setBackground(e, instant)
 		local nextI = 3 - bgFront
 		local A, B = bgLayers[bgFront], bgLayers[nextI]
+		local c1, c2 = themeColors(e)
 		B.grad.Color = ColorSequence.new({
-			ck(0, e.c2:Lerp(e.c1, 0.45)),
-			ck(0.55, e.c2),
-			ck(1, e.c2:Lerp(BLACK, 0.45)),
+			ck(0, c2:Lerp(c1, 0.45)),
+			ck(0.55, c2),
+			ck(1, c2:Lerp(BLACK, 0.45)),
 		})
 		B.img.Image = e.background or ""
 		B.img.Visible = e.background ~= nil
 		for _, b in ipairs(B.blobs) do
 			b.frame.Visible = e.background == nil
 			for _, r in ipairs(b.rings) do
-				r.BackgroundColor3 = e.c1
+				r.BackgroundColor3 = c1
 			end
 		end
 		B.layer.ZIndex = 2
@@ -1318,6 +1659,8 @@ function Library:CreateWindow(settings)
 			tween(B.layer, { GroupTransparency = 0 }, 0.6, Enum.EasingStyle.Quad)
 		end
 		bgFront = nextI
+		fx.paint(e)
+		fx.update(os.clock(), 0)
 	end
 
 	-- Shading so text stays readable on any picture
@@ -1441,6 +1784,34 @@ function Library:CreateWindow(settings)
 		SortOrder = Enum.SortOrder.LayoutOrder,
 		Parent = right,
 	})
+	-- your name, left of your picture. Premium: gold shimmer + glow
+	local nameLabel = text(right, {
+		Size = UDim2.fromOffset(0, 30),
+		AutomaticSize = Enum.AutomaticSize.X,
+		Text = "",
+		FontFace = font(Enum.FontWeight.SemiBold),
+		TextSize = 17,
+		LayoutOrder = 0,
+	})
+	local nameShine = create("UIGradient", {
+		Color = ColorSequence.new({
+			ck(0, Color3.fromRGB(255, 196, 70)),
+			ck(0.42, Color3.fromRGB(255, 226, 140)),
+			ck(0.5, Color3.fromRGB(255, 252, 235)),
+			ck(0.58, Color3.fromRGB(255, 226, 140)),
+			ck(1, Color3.fromRGB(255, 196, 70)),
+		}),
+		Enabled = false,
+		Parent = nameLabel,
+	})
+	local nameGlow = create("UIStroke", {
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual,
+		Color = Color3.fromRGB(255, 190, 60),
+		Thickness = 1.2,
+		Transparency = 0.7,
+		Enabled = false,
+		Parent = nameLabel,
+	})
 	local avatarWrap = create("Frame", {
 		Size = UDim2.fromOffset(34, 34),
 		BackgroundTransparency = 1,
@@ -1522,8 +1893,16 @@ function Library:CreateWindow(settings)
 	end)
 
 	local avatarThumb = ""
+	local isPremium -- set below
+	local function paintName()
+		local shownName = Library.Anonymous and "Player" or (player.DisplayName ~= "" and player.DisplayName or player.Name)
+		nameLabel.Text = isPremium and ("★ " .. shownName) or shownName
+		nameShine.Enabled = isPremium == true
+		nameGlow.Enabled = isPremium == true
+	end
 	local function applyAnonymous()
 		avatar.Image = Library.Anonymous and "" or avatarThumb
+		paintName()
 	end
 	Library:OnAnonymous(avatar, applyAnonymous)
 	task.spawn(function()
@@ -1536,9 +1915,9 @@ function Library:CreateWindow(settings)
 		end
 	end)
 	local premiumLocked = type(settings.Premium) == "boolean"
-	local isPremium
 	if premiumLocked then isPremium = settings.Premium else isPremium = detectPremium() end
 	badge.Visible = isPremium
+	paintName()
 	-- everything that is locked to premium re-checks itself when this changes
 	local premiumListeners = {}
 	local function onPremium(fn)
@@ -1549,6 +1928,7 @@ function Library:CreateWindow(settings)
 		if v == isPremium then return end
 		isPremium = v
 		badge.Visible = v
+		paintName()
 		for _, fn in ipairs(premiumListeners) do
 			task.spawn(fn, v)
 		end
@@ -1935,8 +2315,10 @@ function Library:CreateWindow(settings)
 	------------------------------------------------------------------
 	-- Tabs: selection, tile layout, page swap
 	------------------------------------------------------------------
-	local tiles = {}  -- every tab in row order (Settings is moved to the end)
+	local tiles = {}  -- every tab in row order
 	local selected, lastNormal
+	local settingsOpen = false -- the Settings screen (not a tile: "Settings" next to "Games")
+	local openSettings, closeSettings, settingsBack -- defined with the Settings screen
 
 	local function indexOf(e)
 		return table.find(tiles, e) or 0
@@ -1988,6 +2370,7 @@ function Library:CreateWindow(settings)
 	end
 
 	local function updateScrollFx()
+		if settingsOpen then return end
 		local y = selected and selected.page.CanvasPosition.Y or 0
 		local k = math.clamp(y / 150, 0, 1)
 		row.GroupTransparency = k
@@ -1998,14 +2381,16 @@ function Library:CreateWindow(settings)
 	end
 
 	local function paintNav()
-		local onSettings = selected and selected.internal
+		local onSettings = settingsOpen
 		tween(navGames, { TextColor3 = onSettings and Col.Dim or WHITE }, 0.2)
 		tween(navSettings, { TextColor3 = onSettings and WHITE or Col.Dim }, 0.2)
 	end
 
 	local pageToken = 0
 	local function selectTab(e, quiet)
-		if not e or selected == e then return end
+		if not e then return end
+		if settingsOpen then closeSettings(true) end
+		if selected == e then return end
 		closeMenu()
 		local prev = selected
 		local dir = (prev and indexOf(prev) > indexOf(e)) and -1 or 1
@@ -2042,8 +2427,9 @@ function Library:CreateWindow(settings)
 	end
 
 	navGames.MouseButton1Click:Connect(function()
-		if selected and selected.internal then
-			selectTab(lastNormal or tiles[1])
+		if settingsOpen then
+			sfx("Select")
+			closeSettings()
 		end
 	end)
 
@@ -2062,7 +2448,7 @@ function Library:CreateWindow(settings)
 		screen.GroupTransparency = 1 - v
 		dim.BackgroundTransparency = 1 - (fullscreen and 0 or 0.25) * v
 		glowSet(outerGlow, fullscreen and 0 or v * 0.6)
-		if blur then blur.Size = 14 * v end
+		if blur then blur.Size = fullscreen and 0 or 14 * v end
 	end
 	local function layoutHolder()
 		local vp = viewport()
@@ -2071,9 +2457,29 @@ function Library:CreateWindow(settings)
 			holder.Size = UDim2.fromOffset(math.ceil(vp.X / baseScale), BASE_H)
 			holder.Position = UDim2.fromScale(0.5, 0.5)
 		else
-			baseScale = math.min(settings.Scale or 1, (vp.X - 40) / BASE_W, (vp.Y - 40) / BASE_H)
+			holder.Size = UDim2.fromOffset(BASE_W, BASE_H)
+			local maxScale = (settings.Scale or 1) * (SIZES[windowSize] or 1)
+			baseScale = math.min(maxScale, (vp.X - 40) / BASE_W, (vp.Y - 40) / BASE_H)
 		end
 		applyShown()
+		if not fx.gridBuilt or fx.gridWidth ~= holder.Size.X.Offset then
+			fx.gridWidth = holder.Size.X.Offset
+			buildGrid()
+		end
+	end
+	-- Settings > Screen and Video
+	local function setFullscreen(v)
+		fullscreen = v == true
+		screenCorner.CornerRadius = UDim.new(0, fullscreen and 0 or 18)
+		holder.Position = UDim2.fromScale(0.5, 0.5)
+		layoutHolder()
+		if selected then layoutTiles(false) end
+	end
+	local function setWindowSize(name)
+		if not SIZES[name] then return end
+		windowSize = name
+		holder.Position = UDim2.fromScale(0.5, 0.5)
+		layoutHolder()
 	end
 	shown.Changed:Connect(applyShown)
 	layoutHolder()
@@ -2106,10 +2512,9 @@ function Library:CreateWindow(settings)
 	function Window:Toggle()
 		Window:SetVisible(not visible)
 	end
-	local toggleBind
 	function Window:SetToggleKey(key)
 		toggleKey = key
-		if toggleBind then toggleBind:Set(key, true) end
+		changed("__global_ToggleKey", key.Name)
 	end
 	function Window:Destroy()
 		if gui.Parent then gui:Destroy() end
@@ -2169,7 +2574,12 @@ function Library:CreateWindow(settings)
 			Window:Toggle()
 			return
 		end
-		if visible and not menuOpen and not UserInputService:GetFocusedTextBox() then
+		if visible and settingsOpen and not menuOpen and not UserInputService:GetFocusedTextBox()
+			and (kc == Enum.KeyCode.Escape or kc == Enum.KeyCode.Backspace or kc == Enum.KeyCode.ButtonB) then
+			settingsBack()
+			return
+		end
+		if visible and not settingsOpen and not menuOpen and not UserInputService:GetFocusedTextBox() then
 			if kc == Enum.KeyCode.Left or kc == Enum.KeyCode.DPadLeft or kc == Enum.KeyCode.ButtonL1 then
 				step(-1)
 			elseif kc == Enum.KeyCode.Right or kc == Enum.KeyCode.DPadRight or kc == Enum.KeyCode.ButtonR1 then
@@ -2188,6 +2598,7 @@ function Library:CreateWindow(settings)
 		end
 	end))
 
+	local settingsFx -- the Settings screen's own light rays (set below)
 	-- Per frame: background drift, bokeh, clock, premium check
 	local t0 = os.clock()
 	local lastSecond = 0
@@ -2200,6 +2611,8 @@ function Library:CreateWindow(settings)
 			L.blobs[1].frame.Position = UDim2.fromScale(0.78 + math.sin(t * 0.13 + L.blobs[1].ph) * 0.08, 0.32 + math.cos(t * 0.11) * 0.1)
 			L.blobs[2].frame.Position = UDim2.fromScale(0.3 + math.sin(t * 0.09 + L.blobs[2].ph) * 0.1, 0.85 + math.cos(t * 0.15) * 0.08)
 			L.img.Position = UDim2.new(0.5, math.sin(t * 0.07) * 10, 0.5, math.cos(t * 0.06) * 6)
+			fx.update(t, dt)
+			if settingsFx then settingsFx(t) end
 			for _, b in ipairs(bokeh) do
 				b.y -= b.speed * dt
 				if b.y < -0.05 then
@@ -2213,6 +2626,11 @@ function Library:CreateWindow(settings)
 			for _, b in ipairs(bokeh) do
 				b.f.BackgroundTransparency = 1
 			end
+		end
+		if isPremium then -- the shine sweeps across your name every few seconds
+			local p = (t * 0.35) % 1.6
+			nameShine.Offset = Vector2.new(p * 2.4 - 1.2 - 0.6, 0)
+			nameGlow.Transparency = 0.6 + 0.25 * math.sin(t * 2)
 		end
 		if t - lastSecond > 1 then
 			lastSecond = t
@@ -3465,6 +3883,10 @@ function Library:CreateWindow(settings)
 	end
 
 	function Window:SelectTab(name)
+		if name == "Settings" then
+			openSettings()
+			return
+		end
 		for _, e in ipairs(tiles) do
 			if e.name == name then
 				selectTab(e)
@@ -3474,111 +3896,656 @@ function Library:CreateWindow(settings)
 	end
 
 	------------------------------------------------------------------
-	-- Settings tile (always last)
+	-- Settings screen (console style): "Settings" next to "Games" at the top left opens it.
+	-- A list of categories with icons; clicking one opens its options in the same list.
+	-- Everything here is shared by every script that uses this library.
 	------------------------------------------------------------------
-	local SettingsTab = Window:CreateTab("Settings", {
-		Title = "Settings",
-		Description = "These apply to every script that uses this UI.",
-		Section = "General",
-		ButtonText = "Options",
-	}, true)
-	settingsEntry = SettingsTab._entry
-	navSettings.MouseButton1Click:Connect(function()
-		selectTab(settingsEntry)
-	end)
-
-	toggleBind = SettingsTab:CreateKeybind({
-		Name = "Toggle UI",
-		Description = "Shows / hides this window",
-		Flag = "__global_ToggleKey",
-		CurrentKeybind = toggleKey,
-		Changed = function(key) toggleKey = key end,
+	local setView = create("CanvasGroup", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		GroupTransparency = 1,
+		Visible = false,
+		ZIndex = 2,
+		Parent = screen,
 	})
-	SettingsTab:CreateToggle({
-		Name = "Sounds",
-		Description = "Clicks when you move around",
-		Flag = "__global_Sounds",
-		CurrentValue = Library.SoundsEnabled,
-		Callback = function(v) Library.SoundsEnabled = v end,
+	local setDark = create("Frame", { -- dark slate over the theme, like the console
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.fromRGB(14, 18, 28),
+		BackgroundTransparency = 0.18,
+		BorderSizePixel = 0,
+		Parent = setView,
 	})
-	SettingsTab:CreateToggle({
-		Name = "Background Motion",
-		Description = "Drifting lights and specks",
-		Flag = "__global_Motion",
-		CurrentValue = Library.Motion,
-		Callback = function(v) Library.Motion = v end,
+	create("UIGradient", {
+		Rotation = 35,
+		Transparency = NumberSequence.new({ nk(0, 0.35), nk(0.5, 0.05), nk(1, 0) }),
+		Parent = setDark,
 	})
-	if blur then
-		SettingsTab:CreateToggle({
-			Name = "Blur Game",
-			Description = "Blurs the game behind the window",
-			Flag = "__global_Blur",
-			CurrentValue = true,
-			Callback = function(v)
-				blur.Enabled = v
-			end,
+	-- warm light rays from the top left corner
+	local setRays = {}
+	for i = 1, 6 do
+		local ray = create("Frame", {
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0.12, 0, -0.2, 0),
+			Size = UDim2.fromOffset(1500, 40 + (i % 3) * 45),
+			Rotation = 28 + i * 7,
+			BackgroundColor3 = Color3.fromRGB(240, 232, 218),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Parent = setView,
 		})
+		create("UIGradient", { Transparency = NumberSequence.new({ nk(0, 0.15), nk(0.4, 0.6), nk(1, 1) }), Parent = ray })
+		setRays[i] = { f = ray, rot = 28 + i * 7, a = 0.045 + (i % 2) * 0.03, ph = i * 1.9 }
 	end
-	local antiAfkConn
-	SettingsTab:CreateToggle({
-		Name = "Anti AFK",
-		Description = "Stops the idle kick",
-		Flag = "__global_AntiAfk",
-		CurrentValue = false,
-		Callback = function(v)
-			if antiAfkConn then
-				antiAfkConn:Disconnect()
-				antiAfkConn = nil
-			end
-			if v then
-				antiAfkConn = player.Idled:Connect(function()
-					pcall(function()
-						local vu = game:GetService("VirtualUser")
-						vu:CaptureController()
-						vu:ClickButton2(Vector2.new(0, 0))
-					end)
-				end)
-				track(antiAfkConn)
+	local setGlow = create("Frame", { -- soft light where the rays come from
+		AnchorPoint = CENTER,
+		Position = UDim2.new(0.14, 0, -0.12, 0),
+		Size = UDim2.fromOffset(520, 520),
+		BackgroundColor3 = Color3.fromRGB(240, 232, 218),
+		BackgroundTransparency = 0.88,
+		BorderSizePixel = 0,
+		Parent = setView,
+	})
+	round(setGlow)
+	create("UIGradient", {
+		Transparency = NumberSequence.new({ nk(0, 1), nk(0.5, 0.2), nk(1, 1) }),
+		Parent = setGlow,
+	})
+	settingsFx = function(t)
+		if not settingsOpen then return end
+		for _, r in ipairs(setRays) do
+			r.f.Rotation = r.rot + math.sin(t * 0.09 + r.ph) * 1.8
+			r.f.BackgroundTransparency = 1 - r.a * (0.7 + 0.3 * math.sin(t * 0.3 + r.ph))
+		end
+	end
+	for _, r in ipairs(setRays) do r.f.BackgroundTransparency = 1 - r.a end
+
+	-- title (with a back arrow inside a category)
+	local setBackBtn = create("TextButton", {
+		Position = UDim2.fromOffset(PAD - 6, 62),
+		Size = UDim2.fromOffset(28, 34),
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		Visible = false,
+		Parent = setView,
+	})
+	chevron(setBackBtn, 16, WHITE, 180)
+	local setTitle = text(setView, {
+		Position = UDim2.fromOffset(PAD, 62),
+		Size = UDim2.new(0.5, 0, 0, 34),
+		Text = "Settings",
+		FontFace = font(Enum.FontWeight.Medium),
+		TextSize = 26,
+	})
+	local LIST_W = 560
+	local listGroup = create("CanvasGroup", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 20, 0, 108),
+		Size = UDim2.new(0, LIST_W + 44, 1, -124),
+		BackgroundTransparency = 1,
+		Parent = setView,
+	})
+	local setList = create("ScrollingFrame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 2,
+		ScrollBarImageColor3 = WHITE,
+		ScrollBarImageTransparency = 0.45,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		CanvasSize = UDim2.new(),
+		Parent = listGroup,
+	})
+	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Parent = setList })
+	create("UIPadding", { PaddingRight = UDim.new(0, 44), PaddingBottom = UDim.new(0, 20), Parent = setList })
+
+	-- line icons drawn with frames (recoloured when a row is focused)
+	local function ring(parent, size, thick, pos)
+		local f = create("Frame", {
+			AnchorPoint = CENTER,
+			Position = pos or UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromOffset(size, size),
+			BackgroundTransparency = 1,
+			Parent = parent,
+		})
+		round(f)
+		stroke(f, WHITE, thick or 2, 0)
+		return f
+	end
+	local function bar(parent, w, h, x, y, rot, r)
+		local f = create("Frame", {
+			AnchorPoint = CENTER,
+			Position = UDim2.new(0.5, x or 0, 0.5, y or 0),
+			Size = UDim2.fromOffset(w, h),
+			Rotation = rot or 0,
+			BackgroundColor3 = WHITE,
+			BorderSizePixel = 0,
+			Parent = parent,
+		})
+		if r then corner(f, r) end
+		return f
+	end
+	local Icons = {
+		System = function(box)
+			ring(box, 12, 2)
+			for i = 0, 5 do
+				local a = math.rad(i * 60)
+				bar(box, 4, 4, math.sin(a) * 8, -math.cos(a) * 8, i * 60, 1)
 			end
 		end,
-	})
-	SettingsTab:CreateToggle({
-		Name = "Anonymous Mode",
-		Description = "Hides your picture and name",
-		Flag = "__global_Anonymous",
-		CurrentValue = Library.Anonymous,
-		Callback = function(v) Library:SetAnonymous(v) end,
-	})
-	do
-		local armedAt = 0
-		SettingsTab:CreateButton({
-			Name = "Unload Script",
-			Description = "Turns everything off and closes the UI",
-			Callback = function()
-				if os.clock() - armedAt < 3 then
-					Library:Unload()
-				else
-					armedAt = os.clock()
-					Library:Notify({ Title = "Unload Script", Content = "Press again within 3 seconds to unload.", Duration = 3 })
-				end
+		Screen = function(box)
+			local f = bar(box, 20, 13, 0, -2, 0, 3)
+			f.BackgroundTransparency = 1
+			stroke(f, WHITE, 2, 0)
+			bar(box, 10, 2, 0, 8, 0, 1)
+		end,
+		Themes = function(box)
+			ring(box, 19, 2)
+			for i, p in ipairs({ { -3, -3 }, { 3, -3 }, { 0, 3 } }) do
+				local d = bar(box, 4, 4, p[1], p[2])
+				round(d)
+			end
+		end,
+		Account = function(box)
+			local head = bar(box, 8, 8, 0, -5)
+			round(head)
+			bar(box, 16, 7, 0, 6, 0, 4)
+		end,
+		Data = function(box)
+			for i = -1, 1 do bar(box, 18, 3, 0, i * 6, 0, 2) end
+		end,
+		Power = function(box)
+			ring(box, 16, 2, UDim2.new(0.5, 0, 0.5, 1))
+			bar(box, 2, 9, 0, -5, 0, 1)
+		end,
+	}
+	local function recolor(box, c)
+		for _, d in ipairs(box:GetDescendants()) do
+			if d:IsA("UIStroke") then
+				d.Color = c
+			elseif d:IsA("Frame") and (d.BackgroundTransparency or 0) < 1 then
+				d.BackgroundColor3 = c
+			end
+		end
+	end
+
+	-- one list row. o = { Name, Desc, Icon, Swatch = {c1, c2}, Kind = "switch" | "value" | "radio" | nil,
+	--                     Get = fn, OnClick = fn(row), Danger = bool }
+	local rows, rowOrder = {}, 0
+	local DARK = Color3.fromRGB(20, 22, 28)
+	local function makeRow(o)
+		rowOrder += 1
+		local h = o.Desc and 60 or 48
+		local r = create("TextButton", {
+			Size = UDim2.new(1, 0, 0, h),
+			BackgroundTransparency = 1,
+			AutoButtonColor = false,
+			Text = "",
+			LayoutOrder = rowOrder,
+			Parent = setList,
+		})
+		local hl = create("Frame", {
+			Position = UDim2.fromOffset(4, 3),
+			Size = UDim2.new(1, -8, 1, -6),
+			BackgroundColor3 = WHITE,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Parent = r,
+		})
+		corner(hl, 10)
+		local hlGlow = stroke(hl, WHITE, 3, 1)
+		create("Frame", { -- divider
+			AnchorPoint = Vector2.new(0, 1),
+			Position = UDim2.new(0, 16, 1, 0),
+			Size = UDim2.new(1, -32, 0, 1),
+			BackgroundColor3 = WHITE,
+			BackgroundTransparency = 0.9,
+			BorderSizePixel = 0,
+			Parent = r,
+		})
+		local x = 20
+		local iconBox
+		if o.Icon or o.Swatch then
+			iconBox = create("Frame", {
+				AnchorPoint = Vector2.new(0, 0.5),
+				Position = UDim2.new(0, 20, 0.5, 0),
+				Size = UDim2.fromOffset(24, 24),
+				BackgroundTransparency = 1,
+				Parent = r,
+			})
+			if o.Swatch then
+				local sw = create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = WHITE, BorderSizePixel = 0, Parent = iconBox })
+				round(sw)
+				create("UIGradient", { Rotation = 45, Color = ColorSequence.new(o.Swatch[1], o.Swatch[2]), Parent = sw })
+				stroke(sw, WHITE, 1, 0.6)
+			else
+				o.Icon(iconBox)
+			end
+			x = 58
+		end
+		local label = text(r, {
+			Position = UDim2.fromOffset(x, o.Desc and 9 or 0),
+			Size = UDim2.new(1, -x - 170, 0, o.Desc and 24 or h),
+			Text = o.Name,
+			FontFace = font(Enum.FontWeight.Medium),
+			TextSize = 17,
+			TextColor3 = o.Danger and Color3.fromRGB(255, 140, 140) or WHITE,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		})
+		local desc
+		if o.Desc then
+			desc = text(r, {
+				Position = UDim2.fromOffset(x, 33),
+				Size = UDim2.new(1, -x - 170, 0, 18),
+				Text = o.Desc,
+				TextSize = 13,
+				TextColor3 = Col.PsText,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+			})
+		end
+		local row = { inst = r, o = o, focused = false }
+		local value, track, knob, radioRing, radioFill
+		if o.Kind == "value" then
+			value = text(r, {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -22, 0.5, 0),
+				Size = UDim2.fromOffset(160, 22),
+				Text = "",
+				TextSize = 15,
+				TextColor3 = Col.PsText,
+				TextXAlignment = Enum.TextXAlignment.Right,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+			})
+		elseif o.Kind == "switch" then
+			track = create("Frame", {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -22, 0.5, 0),
+				Size = UDim2.fromOffset(44, 24),
+				BackgroundColor3 = WHITE,
+				BorderSizePixel = 0,
+				Parent = r,
+			})
+			round(track)
+			knob = create("Frame", {
+				AnchorPoint = Vector2.new(0, 0.5),
+				Position = UDim2.new(0, 3, 0.5, 0),
+				Size = UDim2.fromOffset(18, 18),
+				BackgroundColor3 = WHITE,
+				BorderSizePixel = 0,
+				Parent = track,
+			})
+			round(knob)
+		elseif o.Kind == "radio" then
+			radioRing = create("Frame", {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -24, 0.5, 0),
+				Size = UDim2.fromOffset(20, 20),
+				BackgroundTransparency = 1,
+				Parent = r,
+			})
+			round(radioRing)
+			radioRing = stroke(radioRing, WHITE, 2, 0)
+			radioFill = create("Frame", {
+				AnchorPoint = CENTER,
+				Position = UDim2.fromScale(0.5, 0.5),
+				Size = UDim2.fromOffset(10, 10),
+				BackgroundColor3 = WHITE,
+				BorderSizePixel = 0,
+				Parent = radioRing.Parent,
+			})
+			round(radioFill)
+		end
+		function row.paint(animated)
+			local f = row.focused
+			local fg = f and BLACK or (o.Danger and Color3.fromRGB(255, 140, 140) or WHITE)
+			local t = animated and 0.12 or 0
+			local function set(inst, props)
+				if t > 0 then tween(inst, props, t) else for k, v in pairs(props) do inst[k] = v end end
+			end
+			set(hl, { BackgroundTransparency = f and 0 or 1 })
+			set(hlGlow, { Transparency = f and 0.6 or 1 })
+			set(label, { TextColor3 = fg })
+			if desc then set(desc, { TextColor3 = f and Color3.fromRGB(70, 74, 84) or Col.PsText }) end
+			if iconBox and o.Icon then recolor(iconBox, f and BLACK or WHITE) end
+			local v = o.Get and o.Get()
+			if value then
+				value.Text = tostring(v or "")
+				set(value, { TextColor3 = f and Color3.fromRGB(70, 74, 84) or Col.PsText })
+			elseif track then
+				set(track, {
+					BackgroundColor3 = v and accent or (f and DARK or WHITE),
+					BackgroundTransparency = v and 0 or (f and 0.75 or 0.7),
+				})
+				set(knob, { Position = UDim2.new(0, v and 23 or 3, 0.5, 0) })
+			elseif radioRing then
+				set(radioRing, { Color = f and BLACK or WHITE, Transparency = v and 0 or 0.4 })
+				set(radioFill, { BackgroundColor3 = f and BLACK or WHITE, BackgroundTransparency = v and 0 or 1 })
+			end
+		end
+		r.MouseEnter:Connect(function()
+			sfx("Move")
+			row.focused = true
+			row.paint(true)
+		end)
+		r.MouseLeave:Connect(function()
+			row.focused = false
+			row.paint(true)
+		end)
+		r.MouseButton1Click:Connect(function()
+			if not o.OnClick then return end
+			sfx("Select")
+			o.OnClick(row)
+			for _, other in ipairs(rows) do other.paint(true) end
+		end)
+		table.insert(rows, row)
+		row.paint(false)
+		return row
+	end
+	local function clearRows()
+		for _, row in ipairs(rows) do row.inst:Destroy() end
+		table.clear(rows)
+		rowOrder = 0
+		setList.CanvasPosition = Vector2.zero
+	end
+
+	-- the settings themselves (saved for every script: GuiLibrary/PS5Settings.json)
+	local function saveSetting(key, v) changed("__global_" .. key, v) end
+	if type(globalSettings.ToggleKey) == "string" then
+		local ok, kc = pcall(function() return Enum.KeyCode[globalSettings.ToggleKey] end)
+		if ok and kc then toggleKey = kc end
+	end
+	local antiAfkConn
+	local function setAntiAfk(v)
+		if antiAfkConn then
+			antiAfkConn:Disconnect()
+			antiAfkConn = nil
+		end
+		if v then
+			antiAfkConn = player.Idled:Connect(function()
+				pcall(function()
+					local vu = game:GetService("VirtualUser")
+					vu:CaptureController()
+					vu:ClickButton2(Vector2.new(0, 0))
+				end)
+			end)
+			track(antiAfkConn)
+		end
+	end
+	setAntiAfk(globalSettings.AntiAfk == true)
+	local function setTheme(th)
+		currentTheme = th
+		saveSetting("Theme", th.Name)
+		if selected then setBackground(selected, false) else fx.paint(nil) end
+	end
+	function Window:SetTheme(nameOrTheme)
+		local th = type(nameOrTheme) == "table" and nameOrTheme or themeByName(nameOrTheme)
+		if th then setTheme(th) end
+	end
+	function Window:SetFullscreen(v)
+		saveSetting("Fullscreen", v == true)
+		setFullscreen(v)
+	end
+
+	-- a key row: click, then press a key (Escape cancels)
+	local function keyRow(name, desc, get, set)
+		local listening = false
+		local row
+		row = makeRow({
+			Name = name, Desc = desc, Kind = "value",
+			Get = function() return listening and "Press a key..." or get().Name end,
+			OnClick = function()
+				if listening or listeningForKey then return end
+				listening = true
+				listeningForKey = true
+				local conn
+				conn = UserInputService.InputBegan:Connect(function(input)
+					if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+					conn:Disconnect()
+					listening = false
+					if input.KeyCode ~= Enum.KeyCode.Escape then set(input.KeyCode) end
+					task.defer(function() listeningForKey = false end)
+					if row.inst.Parent then row.paint(true) end
+				end)
+			end,
+		})
+		return row
+	end
+	local function choiceRow(name, desc, options, get, set)
+		return makeRow({
+			Name = name, Desc = desc, Kind = "value", Get = get,
+			OnClick = function(row)
+				openMenu(name, options, get(), function(v)
+					set(v)
+					if row.inst.Parent then row.paint(true) end
+				end)
 			end,
 		})
 	end
-	SettingsTab:CreateLabel(
-		(canSave and ("Autosave: " .. filePath) or (saveEnabled and "Autosave: no file access here" or "Autosave: off"))
-			.. "\n" .. (globalFiles and ("Shared: " .. Library.GlobalSettingsFile) or "Shared settings: not saved")
-	)
-	if type(settings.ChangeKey) == "function" then
-		SettingsTab:CreateButton({
-			Name = "Change Key",
-			Description = "Sign in again with a different key",
-			Callback = settings.ChangeKey,
+	local function switchRow(name, desc, get, set)
+		return makeRow({
+			Name = name, Desc = desc, Kind = "switch", Get = get,
+			OnClick = function() set(not get()) end,
 		})
 	end
-	Window.SettingsTab = SettingsTab
-	-- tabs are usually made right after CreateWindow; only fall back to Settings if there are none
+
+	local unloadArmed = 0
+	local Categories = {
+		{ Name = "System", Icon = Icons.System, Build = function()
+			keyRow("Toggle UI", "Shows / hides this window", function() return toggleKey end, function(k)
+				Window:SetToggleKey(k)
+			end)
+			switchRow("Sounds", "Clicks when you move around", function() return Library.SoundsEnabled end, function(v)
+				Library.SoundsEnabled = v
+				saveSetting("Sounds", v)
+			end)
+			switchRow("Anti AFK", "Stops the idle kick", function() return antiAfkConn ~= nil end, function(v)
+				setAntiAfk(v)
+				saveSetting("AntiAfk", v)
+			end)
+		end },
+		{ Name = "Screen and Video", Icon = Icons.Screen, Build = function()
+			switchRow("Full Screen", "Covers the whole screen, like the console", function() return fullscreen end, function(v)
+				Window:SetFullscreen(v)
+			end)
+			choiceRow("Window Size", "When not in full screen", { "Small", "Medium", "Large" }, function() return windowSize end, function(v)
+				setWindowSize(v)
+				saveSetting("WindowSize", v)
+			end)
+			if blur then
+				switchRow("Blur Game", "Blurs the game behind the window", function() return blur.Enabled end, function(v)
+					blur.Enabled = v
+					saveSetting("Blur", v)
+				end)
+			end
+			switchRow("Background Motion", "Light rays, waves and particles move", function() return Library.Motion end, function(v)
+				Library.Motion = v
+				saveSetting("Motion", v)
+			end)
+		end },
+		{ Name = "Themes", Icon = Icons.Themes, Build = function()
+			for _, th in ipairs(Themes) do
+				local sw = th.Game and { Color3.fromRGB(255, 120, 120), Color3.fromRGB(90, 120, 255) } or { th.C1, th.C2 }
+				makeRow({
+					Name = th.Name,
+					Desc = th.Game and "Every game tile gets its own colours" or nil,
+					Swatch = sw,
+					Kind = "radio",
+					Get = function() return currentTheme == th end,
+					OnClick = function() if currentTheme ~= th then setTheme(th) end end,
+				})
+			end
+		end },
+		{ Name = "Account", Icon = Icons.Account, Build = function()
+			makeRow({ Name = "Signed in as", Kind = "value", Get = function()
+				return Library.Anonymous and "Player" or (player.DisplayName ~= "" and player.DisplayName or player.Name)
+			end })
+			makeRow({ Name = "Membership", Kind = "value", Get = function()
+				local u = env().GuiLibraryUser
+				local tier = type(u) == "table" and u.Tier
+				if isPremium then return "★ " .. tostring(tier or "Premium") end
+				return tier and tostring(tier) or "Free"
+			end })
+			switchRow("Anonymous Mode", "Hides your picture and name", function() return Library.Anonymous end, function(v)
+				Library:SetAnonymous(v)
+			end)
+			if type(settings.ChangeKey) == "function" then
+				makeRow({ Name = "Change Key", Desc = "Sign in again with a different key", OnClick = function()
+					closeSettings(true)
+					task.spawn(settings.ChangeKey)
+				end })
+			end
+			if type(settings.SignOut) == "function" then
+				makeRow({ Name = "Sign Out", OnClick = function()
+					closeSettings(true)
+					task.spawn(settings.SignOut)
+				end })
+			end
+		end },
+		{ Name = "Saved Data", Icon = Icons.Data, Build = function()
+			makeRow({ Name = "This script", Desc = canSave and filePath or (saveEnabled and "No file access here" or "Autosave is off"), Kind = "value",
+				Get = function() return canSave and "Autosave on" or "Not saved" end })
+			makeRow({ Name = "Shared settings", Desc = globalFiles and Library.GlobalSettingsFile or "No file access here", Kind = "value",
+				Get = function() return globalFiles and "Saved" or "Not saved" end })
+			if canSave then
+				makeRow({ Name = "Save Now", OnClick = function()
+					flush()
+					Library:Notify({ Title = "Saved", Content = filePath, Duration = 2 })
+				end })
+			end
+		end },
+		{ Name = "Unload Script", Icon = Icons.Power, Danger = true, Click = function()
+			if os.clock() - unloadArmed < 3 then
+				Library:Unload()
+			else
+				unloadArmed = os.clock()
+				Library:Notify({ Title = "Unload Script", Content = "Click again within 3 seconds to unload.", Duration = 3 })
+			end
+		end },
+	}
+
+	local currentCat
+	local listToken = 0
+	local function showList(cat, dir)
+		listToken += 1
+		local mine = listToken
+		currentCat = cat
+		local function fill()
+			clearRows()
+			if cat then
+				cat.Build()
+			else
+				for _, c in ipairs(Categories) do
+					makeRow({ Name = c.Name, Icon = c.Icon, Danger = c.Danger, OnClick = function()
+						if c.Click then c.Click() else showList(c, 1) end
+					end })
+				end
+			end
+			setTitle.Text = cat and cat.Name or "Settings"
+			setTitle.Position = UDim2.fromOffset(cat and PAD + 26 or PAD, 62)
+			setBackBtn.Visible = cat ~= nil
+		end
+		if not dir then
+			fill()
+			listGroup.GroupTransparency = 0
+			listGroup.Position = UDim2.new(0.5, 20, 0, 108)
+			return
+		end
+		tween(listGroup, { GroupTransparency = 1, Position = UDim2.new(0.5, 20 - 40 * dir, 0, 108) }, 0.15, Enum.EasingStyle.Quad)
+		task.delay(0.15, function()
+			if mine ~= listToken then return end
+			fill()
+			listGroup.Position = UDim2.new(0.5, 20 + 40 * dir, 0, 108)
+			tween(listGroup, { GroupTransparency = 0, Position = UDim2.new(0.5, 20, 0, 108) }, 0.35)
+		end)
+	end
+	setBackBtn.MouseButton1Click:Connect(function()
+		sfx("Select")
+		showList(nil, -1)
+	end)
+
+	local setToken = 0
+	openSettings = function()
+		if settingsOpen then return end
+		closeMenu()
+		settingsOpen = true
+		setToken += 1
+		paintNav()
+		showList(nil)
+		-- the game tiles and the page step aside
+		tween(row, { GroupTransparency = 1 }, 0.2)
+		if selected then
+			tween(selected.wrap, { GroupTransparency = 1, Position = UDim2.fromOffset(0, 30) }, 0.25, Enum.EasingStyle.Quad)
+		end
+		tween(scrollDim, { BackgroundTransparency = 1 }, 0.2)
+		tween(topScrollShade, { BackgroundTransparency = 1 }, 0.2)
+		local mine = setToken
+		task.delay(0.25, function()
+			if mine ~= setToken then return end
+			row.Visible = false
+			if selected then selected.wrap.Visible = false end
+		end)
+		boostRays = 0.6
+		fx.paint()
+		setView.Visible = true
+		setView.GroupTransparency = 1
+		listGroup.Position = UDim2.new(0.5, 20, 0, 140)
+		tween(setView, { GroupTransparency = 0 }, 0.4)
+		tween(listGroup, { Position = UDim2.new(0.5, 20, 0, 108) }, 0.5)
+	end
+	closeSettings = function(instant)
+		if not settingsOpen then return end
+		settingsOpen = false
+		setToken += 1
+		local mine = setToken
+		paintNav()
+		boostRays = 0
+		fx.paint()
+		tween(setView, { GroupTransparency = 1 }, instant and 0.15 or 0.25)
+		task.delay(instant and 0.15 or 0.25, function()
+			if mine == setToken then setView.Visible = false end
+		end)
+		row.Visible = true
+		row.GroupTransparency = 1
+		updateScrollFx()
+		local k = row.GroupTransparency
+		row.GroupTransparency = 1
+		tween(row, { GroupTransparency = k }, 0.35)
+		if selected and not instant then
+			selected.wrap.Visible = true
+			selected.wrap.Position = UDim2.fromOffset(0, 30)
+			tween(selected.wrap, { GroupTransparency = 0, Position = UDim2.fromOffset(0, 0) }, 0.45)
+			selected.intro()
+		elseif selected then
+			selected.wrap.Visible = true
+			selected.wrap.GroupTransparency = 0
+			selected.wrap.Position = UDim2.fromOffset(0, 0)
+		end
+	end
+	-- Escape / Backspace: out of a category, then back to the games
+	settingsBack = function()
+		if currentCat then
+			sfx("Select")
+			showList(nil, -1)
+		else
+			closeSettings()
+		end
+	end
+	navSettings.MouseButton1Click:Connect(function()
+		sfx("Select")
+		if settingsOpen then settingsBack() else openSettings() end
+	end)
+	for _, b in ipairs({ navGames, navSettings }) do
+		b.MouseEnter:Connect(function() sfx("Move") end)
+	end
+	function Window:OpenSettings() openSettings() end
+	function Window:CloseSettings() closeSettings() end
+
+	-- no game tabs at all: open on Settings
 	task.defer(function()
-		if not selected then selectTab(settingsEntry, true) end
+		if not selected then
+			openSettings()
+		end
 	end)
 
 	-- Boot animation, then the home screen zooms in
