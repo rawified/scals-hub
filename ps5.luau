@@ -45,8 +45,11 @@
 	check), or Premium = true/false in CreateWindow, or Window:SetPremium(bool). Window:IsPremium().
 	CreateWindow({ PremiumText = "Get a premium key on our Discord." }) changes the notification text.
 
-	TELEPORT: CreateWindow({ QueueOnTeleport = 'loadstring(game:HttpGet("...loader.lua"))()' }) runs
-	that code again in the new server (needs queue_on_teleport in your executor), so the hub comes back.
+	TELEPORT: CreateWindow({ QueueOnTeleport = "https://raw.githubusercontent.com/.../loader.lua" }) downloads
+	and runs that script again in the new server (needs queue_on_teleport, e.g. Volt's queueonteleport),
+	so the hub comes back. It waits for the game to load and retries the download a few times.
+	Lua code instead of a URL also works. In the new server, getgenv().ScalsGet(url) returns the
+	downloaded script as a function, with the same retries.
 
 	ITEMS = the cards under each tab (the "community" row). Every element is a card and every one
 	accepts an optional Flag = "SaveName" and Description = "small text under the name".
@@ -64,6 +67,9 @@
 
 	NAVIGATION: click the tiles, or Left / Right arrows (gamepad: D-pad, L1 / R1) while the window is open.
 	Mouse wheel / the white button scrolls down to the cards; the tile row fades out like on the console.
+
+	LOADER: Library:CreateLoader({...}) - console-style sign-in (user screen -> key screen -> script tiles),
+	same options and methods as GuiLibrary's CreateLoader. Full list above the function, near the end.
 
 	Window:SetVisible(bool) / :Toggle() / :SetToggleKey(KeyCode) / :SelectTab(name) / :Destroy()
 	Library:Notify({Title, Content, Duration, Icon = "rbxassetid://..."})
@@ -1568,10 +1574,35 @@ function Library:CreateWindow(settings)
 					"local g = (getgenv and getgenv()) or _G",
 					"g.ScalsLoaderRunning = nil",
 					"g.GuiLibrarySplashShown = nil",
-					"local fn, compileErr = loadstring(" .. string.format("%q", settings.QueueOnTeleport) .. ")",
-					"if not fn then toast('Reload failed', tostring(compileErr)); warn('[PS5Library] queued code: ' .. tostring(compileErr)); return end",
-					"local ok, err = pcall(fn)",
-					"if not ok then toast('Reload failed', tostring(err)); warn('[PS5Library] queued code: ' .. tostring(err)) end",
+					-- Right after a teleport, HttpGet can return nothing / an error page for a few seconds,
+					-- so downloads are retried. getgenv().ScalsGet(url) is left for scripts to use too.
+					"local function get(url)",
+					"  local last = 'no response'",
+					"  for i = 1, 8 do",
+					"    local ok, src = pcall(function() return game:HttpGet(url) end)",
+					"    if ok and type(src) == 'string' and #src > 0 then",
+					"      local fn, err = loadstring(src)",
+					"      if fn then return fn end",
+					"      last = 'not a script: ' .. tostring(err) .. ' (got: ' .. src:sub(1, 40):gsub('%s+', ' ') .. ')'",
+					"    else",
+					"      last = ok and 'empty response' or tostring(src)",
+					"    end",
+					"    task.wait(math.min(i, 3))",
+					"  end",
+					"  error('download failed: ' .. url .. ' - ' .. last, 0)",
+					"end",
+					"g.ScalsGet = get",
+					"local source = " .. string.format("%q", settings.QueueOnTeleport),
+					"local ok, err = pcall(function()",
+					"  if source:match('^https?://') then",
+					"    get(source)()",
+					"  else",
+					"    local fn, compileErr = loadstring(source)",
+					"    if not fn then error(compileErr, 0) end",
+					"    fn()",
+					"  end",
+					"end)",
+					"if not ok then toast('Reload failed', tostring(err)); warn('[PS5Library] reload after teleport: ' .. tostring(err)) end",
 				}, "\n")
 				-- only one copy, even after several Play presses / a failed teleport
 				local clear = (type(clearqueueonteleport) == "function" and clearqueueonteleport)
@@ -3337,6 +3368,1329 @@ function Library:CreateWindow(settings)
 	end
 
 	return Window
+end
+
+----------------------------------------------------------------------
+-- Loader: console-style sign-in
+--	1. boot animation (optional, same as the window's)
+--	2. "Welcome back" user screen - click your user to sign in
+--	3. key screen (the passcode step) - Get Key / Sign In; skipped when a saved key already passed
+--	4. home: your scripts as game tiles, info chips, big Load button, Change Key
+--
+-- Same options and methods as GuiLibrary's CreateLoader, so a loader can switch library:
+--	Library:CreateLoader({
+--		Name, Footer, Status = { Text, Color }, Info = { {label, value}, ... },
+--		Options = { "Murder Mystery 2", "Universal" }, CurrentOption, ButtonText,
+--		StartPage = "Key" | "Main",       -- where signing in goes ("Main" = saved key is fine)
+--		Splash = { Image, Duration, Subtitle },
+--		LoginText = "Choose your user to sign in",
+--		Fullscreen = false,
+--		OnLoad(option), OnSelect(option), OnRefresh(), OnClose(), OnShown(), OnStreamerMode(on),
+--		Key = { Note, GetKeyLink, Check(key) -> ok, reason, OnGetKey(), OnSuccess(key), OnResetKey() },
+--	})
+--	Loader:SetInfo(label, value) / :SetStatus(text, color) / :SetOptions(list, current) / :SetOption(o)
+--	Loader:GetOption() / :SetButton(text) / :SetStreamerMode(bool) / :ShowKey(message) / :ShowMain()
+--	Loader:SetKeyStatus(text, isError) / :Close() / :Destroy()
+----------------------------------------------------------------------
+
+-- Pill button: primary = white with black text; secondary = dark, turns white when hovered
+local function makePill(parent, label, primary, width, order)
+	local slot = create("Frame", {
+		Size = UDim2.fromOffset(width, 46),
+		BackgroundTransparency = 1,
+		LayoutOrder = order or 0,
+		Parent = parent,
+	})
+	local glow = softGlow(slot, 12, WHITE, 4, 4)
+	local b = create("TextButton", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = primary and WHITE or BLACK,
+		BackgroundTransparency = primary and 0 or 0.45,
+		AutoButtonColor = false,
+		Text = label,
+		FontFace = font(Enum.FontWeight.SemiBold),
+		TextSize = 17,
+		TextColor3 = primary and BLACK or WHITE,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = slot,
+	})
+	corner(b, 12)
+	if not primary then stroke(b, WHITE, 1, 0.8) end
+	local sc = create("UIScale", { Parent = slot })
+	b.MouseEnter:Connect(function()
+		sfx("Move")
+		tween(sc, { Scale = 1.05 }, 0.25)
+		glowTo(glow, 1)
+		if not primary then
+			tween(b, { BackgroundColor3 = WHITE, BackgroundTransparency = 0, TextColor3 = BLACK }, 0.15)
+		end
+	end)
+	b.MouseLeave:Connect(function()
+		tween(sc, { Scale = 1 }, 0.25)
+		glowTo(glow, 0)
+		if not primary then
+			tween(b, { BackgroundColor3 = BLACK, BackgroundTransparency = 0.45, TextColor3 = WHITE }, 0.15)
+		end
+	end)
+	local function pop()
+		sfx("Select")
+		tween(sc, { Scale = 0.96 }, 0.08)
+		task.delay(0.08, function() tween(sc, { Scale = 1.05 }, 0.3, Enum.EasingStyle.Back) end)
+	end
+	return b, pop, slot
+end
+
+function Library:CreateLoader(settings)
+	settings = settings or {}
+	if settings.Accent then Library.Accent = settings.Accent end
+	if type(settings.Sounds) == "table" then
+		for k, v in pairs(settings.Sounds) do
+			Library.Sounds[k] = v
+		end
+	end
+	local accent = Library.Accent
+	local player = Players.LocalPlayer
+	local hubName = settings.Name or "Hub"
+	local kcfg = settings.Key or {}
+	local hasKeyPage = settings.Key ~= nil
+	local fullscreen = settings.Fullscreen == true
+	-- where clicking your user goes: "Main" when a saved key already passed, else the key screen
+	local afterLogin = settings.StartPage or (hasKeyPage and "Key" or "Main")
+
+	local Loader = {}
+	local conns = {}
+	local function track(c)
+		table.insert(conns, c)
+		return c
+	end
+
+	------------------------------------------------------------------
+	-- Root
+	------------------------------------------------------------------
+	local gui = create("ScreenGui", {
+		Name = hubName .. "Loader",
+		DisplayOrder = 2147483000,
+		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		Parent = player:WaitForChild("PlayerGui"),
+	})
+	Loader.Gui = gui
+	local dim = create("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = BLACK,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Parent = gui,
+	})
+	local holder = create("Frame", {
+		AnchorPoint = CENTER,
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(BASE_W, BASE_H),
+		BackgroundTransparency = 1,
+		Parent = gui,
+	})
+	local uiScale = create("UIScale", { Parent = holder })
+	local outerGlow = softGlow(holder, 20, accent:Lerp(WHITE, 0.3), 6, 6)
+	local screen = create("CanvasGroup", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = WHITE,
+		BorderSizePixel = 0,
+		GroupTransparency = 1,
+		Parent = holder,
+	})
+	corner(screen, fullscreen and 0 or 18)
+	local bgGrad = create("UIGradient", {
+		Rotation = 100,
+		Color = ColorSequence.new({
+			ck(0, Color3.fromRGB(12, 46, 116)),
+			ck(0.5, Color3.fromRGB(5, 18, 52)),
+			ck(1, Color3.fromRGB(1, 3, 12)),
+		}),
+		Parent = screen,
+	})
+
+	-- soft light blobs + floating specks
+	local blobs = {}
+	for i = 1, 2 do
+		local blob = create("Frame", {
+			AnchorPoint = CENTER,
+			Size = UDim2.fromScale(i == 1 and 1 or 0.7, i == 1 and 1 or 0.7),
+			SizeConstraint = Enum.SizeConstraint.RelativeYY,
+			BackgroundTransparency = 1,
+			Parent = screen,
+		})
+		for j = 1, 7 do
+			local f = create("Frame", {
+				AnchorPoint = CENTER,
+				Position = UDim2.fromScale(0.5, 0.5),
+				Size = UDim2.fromScale(j / 7, j / 7),
+				BackgroundColor3 = Color3.fromRGB(110, 170, 255),
+				BackgroundTransparency = 0.96,
+				BorderSizePixel = 0,
+				Parent = blob,
+			})
+			round(f)
+		end
+		blobs[i] = { frame = blob, ph = i * 2.1 }
+	end
+	local bokeh = {}
+	for i = 1, 34 do
+		local s = math.random(2, 7)
+		local f = create("Frame", {
+			AnchorPoint = CENTER,
+			Size = UDim2.fromOffset(s, s),
+			BackgroundColor3 = math.random() < 0.6 and WHITE or Color3.fromRGB(150, 200, 255),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Parent = screen,
+		})
+		round(f)
+		bokeh[i] = {
+			f = f,
+			x = math.random(),
+			y = math.random(),
+			speed = 0.006 + math.random() * 0.02,
+			alpha = 0.1 + math.random() * 0.35,
+			tw = 0.6 + math.random() * 1.8,
+			ph = math.random() * 6.28,
+		}
+	end
+
+	------------------------------------------------------------------
+	-- Top bar: name + status on the left, avatar (home only) / clock / close on the right
+	------------------------------------------------------------------
+	local topLeft = create("Frame", {
+		Position = UDim2.fromOffset(PAD, 18),
+		Size = UDim2.new(0.6, 0, 0, 26),
+		BackgroundTransparency = 1,
+		ZIndex = 5,
+		Parent = screen,
+	})
+	create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 10),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = topLeft,
+	})
+	text(topLeft, {
+		Size = UDim2.fromOffset(0, 26),
+		AutomaticSize = Enum.AutomaticSize.X,
+		Text = hubName,
+		FontFace = font(Enum.FontWeight.Bold),
+		TextSize = 20,
+		LayoutOrder = 1,
+	})
+	local statusDot = create("Frame", {
+		Size = UDim2.fromOffset(8, 8),
+		BackgroundColor3 = accent,
+		BorderSizePixel = 0,
+		LayoutOrder = 2,
+		Parent = topLeft,
+	})
+	round(statusDot)
+	local statusText = text(topLeft, {
+		Size = UDim2.fromOffset(0, 26),
+		AutomaticSize = Enum.AutomaticSize.X,
+		Text = "",
+		TextSize = 14,
+		TextColor3 = Col.Sub,
+		LayoutOrder = 3,
+	})
+	function Loader:SetStatus(t, color)
+		statusText.Text = t or ""
+		statusDot.BackgroundColor3 = color or accent
+		statusDot.Visible = (t or "") ~= ""
+	end
+	local st = settings.Status or {}
+	Loader:SetStatus(st.Text or "Working", st.Color)
+
+	local topRight = create("Frame", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -PAD + 8, 0, 12),
+		Size = UDim2.new(0.4, 0, 0, 36),
+		BackgroundTransparency = 1,
+		ZIndex = 5,
+		Parent = screen,
+	})
+	create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Right,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 18),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = topRight,
+	})
+	local accountBtn = create("TextButton", {
+		Size = UDim2.fromOffset(34, 34),
+		BackgroundColor3 = Col.Card,
+		AutoButtonColor = false,
+		Text = "",
+		Visible = false,
+		LayoutOrder = 1,
+		Parent = topRight,
+	})
+	round(accountBtn)
+	local accountRing = stroke(accountBtn, WHITE, 1.5, 0.6)
+	local accountImg = create("ImageLabel", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Image = "",
+		Parent = accountBtn,
+	})
+	round(accountImg)
+	local clock = text(topRight, {
+		Size = UDim2.fromOffset(0, 30),
+		AutomaticSize = Enum.AutomaticSize.X,
+		Text = os.date("%H:%M"),
+		FontFace = font(Enum.FontWeight.Medium),
+		TextSize = 19,
+		LayoutOrder = 2,
+	})
+	local closeBtn = create("TextButton", {
+		Size = UDim2.fromOffset(30, 30),
+		BackgroundColor3 = WHITE,
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		LayoutOrder = 3,
+		Parent = topRight,
+	})
+	round(closeBtn)
+	local closeLines = closeGlyph(closeBtn, 12, Col.Sub)
+	closeBtn.MouseEnter:Connect(function()
+		tween(closeBtn, { BackgroundTransparency = 0.85 }, 0.15)
+		for _, l in ipairs(closeLines) do tween(l, { BackgroundColor3 = WHITE }, 0.15) end
+	end)
+	closeBtn.MouseLeave:Connect(function()
+		tween(closeBtn, { BackgroundTransparency = 1 }, 0.15)
+		for _, l in ipairs(closeLines) do tween(l, { BackgroundColor3 = Col.Sub }, 0.15) end
+	end)
+	accountBtn.MouseEnter:Connect(function() tween(accountRing, { Transparency = 0 }, 0.15) end)
+	accountBtn.MouseLeave:Connect(function() tween(accountRing, { Transparency = 0.6 }, 0.15) end)
+
+	if settings.Footer and settings.Footer ~= "" then
+		text(screen, {
+			AnchorPoint = Vector2.new(0, 1),
+			Position = UDim2.new(0, PAD, 1, -18),
+			Size = UDim2.fromOffset(400, 18),
+			Text = settings.Footer,
+			TextSize = 13,
+			TextColor3 = Col.Dim,
+			ZIndex = 5,
+		})
+	end
+
+	------------------------------------------------------------------
+	-- Your user (name + picture, hidden in streamer / anonymous mode)
+	------------------------------------------------------------------
+	local streamer = Library.Anonymous or settings.StreamerMode == true
+	local thumb = ""
+	local avatars, names = {}, {}
+	local function displayName()
+		if streamer then return "Player" end
+		return player.DisplayName ~= "" and player.DisplayName or player.Name
+	end
+	local function applyUser()
+		for _, a in ipairs(avatars) do a.Image = streamer and "" or thumb end
+		for _, n in ipairs(names) do n.Text = displayName() end
+		accountImg.Image = streamer and "" or thumb
+	end
+	task.spawn(function()
+		local ok, img = pcall(function()
+			return Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+		end)
+		if ok and img and gui.Parent then
+			thumb = img
+			applyUser()
+		end
+	end)
+
+	------------------------------------------------------------------
+	-- Pages (crossfade + slight zoom, like the console)
+	------------------------------------------------------------------
+	local pages = {}
+	local currentName
+	local function makePage(name)
+		local group = create("CanvasGroup", {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			GroupTransparency = 1,
+			Visible = false,
+			ZIndex = 2,
+			Parent = screen,
+		})
+		local sc = create("UIScale", { Parent = group })
+		local p = { group = group, scale = sc }
+		pages[name] = p
+		return p
+	end
+
+	-- Dialog: title, text, and a list of choices (hovered one turns white)
+	local modal = create("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = BLACK,
+		BackgroundTransparency = 1,
+		Visible = false,
+		ZIndex = 30,
+		Parent = screen,
+	})
+	local scrim = create("TextButton", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		Parent = modal,
+	})
+	local panel = create("CanvasGroup", {
+		AnchorPoint = CENTER,
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(400, 260),
+		BackgroundColor3 = Col.Panel,
+		BackgroundTransparency = 0.02,
+		GroupTransparency = 1,
+		BorderSizePixel = 0,
+		Parent = modal,
+	})
+	corner(panel, 18)
+	local panelScale = create("UIScale", { Parent = panel })
+	local panelTitle = text(panel, {
+		Position = UDim2.fromOffset(24, 18),
+		Size = UDim2.new(1, -48, 0, 26),
+		Text = "",
+		FontFace = font(Enum.FontWeight.Bold),
+		TextSize = 20,
+	})
+	local panelBody = text(panel, {
+		Position = UDim2.fromOffset(24, 50),
+		Size = UDim2.new(1, -48, 0, 40),
+		Text = "",
+		TextSize = 14,
+		TextColor3 = Col.Sub,
+		TextWrapped = true,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	})
+	local panelList = create("Frame", {
+		Position = UDim2.fromOffset(12, 60),
+		Size = UDim2.new(1, -24, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		Parent = panel,
+	})
+	create("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = panelList })
+
+	local dialogOpen, dialogToken = false, 0
+	local function closeDialog()
+		if not dialogOpen then return end
+		dialogOpen = false
+		dialogToken += 1
+		local mine = dialogToken
+		tween(modal, { BackgroundTransparency = 1 }, 0.2)
+		tween(panel, { GroupTransparency = 1 }, 0.18)
+		tween(panelScale, { Scale = 0.95 }, 0.2)
+		task.delay(0.22, function()
+			if mine == dialogToken then modal.Visible = false end
+		end)
+	end
+	-- choices = { { "Label", function() end, danger = true }, ... }
+	local function openDialog(title, body, choices)
+		dialogToken += 1
+		dialogOpen = true
+		for _, c in ipairs(panelList:GetChildren()) do
+			if c:IsA("TextButton") then c:Destroy() end
+		end
+		panelTitle.Text = title
+		panelBody.Text = body or ""
+		panelBody.Visible = body ~= nil
+		local top = body and 98 or 58
+		panelList.Position = UDim2.fromOffset(12, top)
+		panel.Size = UDim2.fromOffset(400, top + #choices * 44 + 12)
+		for i, ch in ipairs(choices) do
+			local b = create("TextButton", {
+				Size = UDim2.new(1, 0, 0, 40),
+				BackgroundColor3 = WHITE,
+				BackgroundTransparency = 1,
+				AutoButtonColor = false,
+				Text = "",
+				LayoutOrder = i,
+				Parent = panelList,
+			})
+			corner(b, 10)
+			local baseColor = ch.danger and Col.Error or WHITE
+			local lbl = text(b, {
+				Position = UDim2.fromOffset(16, 0),
+				Size = UDim2.new(1, -32, 1, 0),
+				Text = ch[1],
+				FontFace = font(Enum.FontWeight.Medium),
+				TextSize = 16,
+				TextColor3 = baseColor,
+			})
+			b.MouseEnter:Connect(function()
+				sfx("Move")
+				tween(b, { BackgroundTransparency = 0 }, 0.12)
+				tween(lbl, { TextColor3 = BLACK }, 0.12)
+			end)
+			b.MouseLeave:Connect(function()
+				tween(b, { BackgroundTransparency = 1 }, 0.12)
+				tween(lbl, { TextColor3 = baseColor }, 0.12)
+			end)
+			b.MouseButton1Click:Connect(function()
+				sfx("Select")
+				closeDialog()
+				if ch[2] then task.spawn(ch[2]) end
+			end)
+		end
+		modal.Visible = true
+		modal.BackgroundTransparency = 1
+		panel.GroupTransparency = 1
+		panelScale.Scale = 1.06
+		tween(modal, { BackgroundTransparency = 0.45 }, 0.25)
+		tween(panel, { GroupTransparency = 0 }, 0.3)
+		tween(panelScale, { Scale = 1 }, 0.35)
+	end
+	scrim.MouseButton1Click:Connect(closeDialog)
+
+	local shownOnce = false
+	local function showPage(name)
+		local p = pages[name]
+		if not p or currentName == name then return end
+		closeDialog()
+		local old = currentName and pages[currentName]
+		currentName = name
+		if old then
+			tween(old.scale, { Scale = 0.97 }, 0.25)
+			tween(old.group, { GroupTransparency = 1 }, 0.22, Enum.EasingStyle.Quad)
+			task.delay(0.24, function()
+				if pages[currentName] ~= old then old.group.Visible = false end
+			end)
+		end
+		p.group.Visible = true
+		p.group.GroupTransparency = 1
+		p.scale.Scale = 1.03
+		tween(p.group, { GroupTransparency = 0 }, 0.45)
+		tween(p.scale, { Scale = 1 }, 0.5)
+		accountBtn.Visible = name == "main"
+		if p.onShow then p.onShow() end
+		if name == "main" and not shownOnce then
+			shownOnce = true
+			fire(settings.OnShown) -- after signing in (the loader starts its auto-load countdown here)
+		end
+	end
+
+	local function shake(target, base)
+		task.spawn(function()
+			for _, x in ipairs({ 10, -8, 6, -4, 2, 0 }) do
+				target.Position = base + UDim2.fromOffset(x, 0)
+				task.wait(0.035)
+			end
+		end)
+	end
+
+	------------------------------------------------------------------
+	-- 1. User screen
+	------------------------------------------------------------------
+	local userPage = makePage("user")
+	text(userPage.group, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 104),
+		Size = UDim2.new(0.9, 0, 0, 42),
+		Text = "Welcome back to " .. hubName,
+		FontFace = font(Enum.FontWeight.Light),
+		TextSize = 36,
+		TextXAlignment = Enum.TextXAlignment.Center,
+	})
+	text(userPage.group, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 150),
+		Size = UDim2.new(0.9, 0, 0, 22),
+		Text = settings.LoginText or "Choose your user to sign in",
+		TextSize = 17,
+		TextColor3 = Col.Sub,
+		TextXAlignment = Enum.TextXAlignment.Center,
+	})
+	local userWrap = create("Frame", {
+		AnchorPoint = CENTER,
+		Position = UDim2.new(0.5, 0, 0, 290),
+		Size = UDim2.fromOffset(150, 150),
+		BackgroundTransparency = 1,
+		Parent = userPage.group,
+	})
+	local userScale = create("UIScale", { Parent = userWrap })
+	local userGlow = softGlow(userWrap, 999, WHITE, 6, 5)
+	local userAvatar = create("ImageLabel", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Col.Card,
+		BorderSizePixel = 0,
+		Image = "",
+		Parent = userWrap,
+	})
+	round(userAvatar)
+	table.insert(avatars, userAvatar)
+	local userRingHolder = create("Frame", {
+		AnchorPoint = CENTER,
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.new(1, 14, 1, 14),
+		BackgroundTransparency = 1,
+		Parent = userWrap,
+	})
+	round(userRingHolder)
+	local userRing = stroke(userRingHolder, WHITE, 3, 0.6)
+	local userHit = create("TextButton", {
+		Size = UDim2.new(1, 20, 1, 80),
+		Position = UDim2.fromOffset(-10, -10),
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		Parent = userWrap,
+	})
+	local userName = text(userPage.group, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 384),
+		Size = UDim2.new(0.6, 0, 0, 30),
+		Text = "",
+		FontFace = font(Enum.FontWeight.SemiBold),
+		TextSize = 24,
+		TextXAlignment = Enum.TextXAlignment.Center,
+	})
+	table.insert(names, userName)
+	local userSub = text(userPage.group, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 416),
+		Size = UDim2.new(0.6, 0, 0, 20),
+		Text = "",
+		TextSize = 15,
+		TextColor3 = Col.Sub,
+		TextXAlignment = Enum.TextXAlignment.Center,
+	})
+	local function paintUserSub()
+		if detectPremium() then
+			userSub.Text = "★ Premium"
+			userSub.TextColor3 = Col.Gold
+		elseif afterLogin == "Main" then
+			userSub.Text = "Key saved - you'll sign in straight away"
+			userSub.TextColor3 = Col.Sub
+		else
+			userSub.Text = "You'll need a key to sign in"
+			userSub.TextColor3 = Col.Sub
+		end
+	end
+
+	-- streamer mode switch at the bottom
+	local hideRow = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -44),
+		Size = UDim2.fromOffset(200, 46),
+		BackgroundTransparency = 1,
+		Parent = userPage.group,
+	})
+	local hideBtn, hidePop = makePill(hideRow, "", false, 200)
+	local function paintHide()
+		hideBtn.Text = streamer and "Show my info" or "Hide my info"
+	end
+
+	local userHover = false
+	userHit.MouseEnter:Connect(function()
+		userHover = true
+		sfx("Move")
+		tween(userScale, { Scale = 1.06 }, 0.3)
+		tween(userRing, { Transparency = 0 }, 0.2)
+		glowTo(userGlow, 0.9, 0.3)
+	end)
+	userHit.MouseLeave:Connect(function()
+		userHover = false
+		tween(userScale, { Scale = 1 }, 0.3)
+		tween(userRing, { Transparency = 0.6 }, 0.2)
+		glowTo(userGlow, 0, 0.3)
+	end)
+
+	local signing = false
+	local function signIn()
+		if signing or currentName ~= "user" then return end
+		signing = true
+		sfx("Select")
+		tween(userScale, { Scale = 1.14 }, 0.3, Enum.EasingStyle.Back)
+		userRing.Transparency = 0
+		glowTo(userGlow, 1.4, 0.2)
+		local direct = afterLogin == "Main"
+		if direct then
+			userSub.Text = "Signing in..."
+			userSub.TextColor3 = WHITE
+		end
+		task.delay(direct and 0.9 or 0.35, function()
+			signing = false
+			tween(userScale, { Scale = userHover and 1.06 or 1 }, 0.3)
+			showPage(afterLogin == "Main" and "main" or "key")
+		end)
+	end
+	userHit.MouseButton1Click:Connect(signIn)
+	userPage.onShow = function()
+		paintUserSub()
+		userScale.Scale = 0.9
+		tween(userScale, { Scale = userHover and 1.06 or 1 }, 0.6, Enum.EasingStyle.Back)
+	end
+
+	------------------------------------------------------------------
+	-- 2. Key screen (the passcode step)
+	------------------------------------------------------------------
+	local keyPage = makePage("key")
+	local backBtn = create("TextButton", {
+		Position = UDim2.fromOffset(PAD - 8, 70),
+		Size = UDim2.fromOffset(96, 34),
+		BackgroundColor3 = WHITE,
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		Parent = keyPage.group,
+	})
+	corner(backBtn, 10)
+	local backIcon = create("Frame", {
+		Position = UDim2.fromOffset(8, 7),
+		Size = UDim2.fromOffset(20, 20),
+		BackgroundTransparency = 1,
+		Parent = backBtn,
+	})
+	chevron(backIcon, 12, WHITE, 180)
+	local backLabel = text(backBtn, {
+		Position = UDim2.fromOffset(32, 0),
+		Size = UDim2.new(1, -36, 1, 0),
+		Text = "Back",
+		FontFace = font(Enum.FontWeight.Medium),
+		TextSize = 16,
+	})
+	backBtn.MouseEnter:Connect(function()
+		tween(backBtn, { BackgroundTransparency = 0.88 }, 0.15)
+	end)
+	backBtn.MouseLeave:Connect(function()
+		tween(backBtn, { BackgroundTransparency = 1 }, 0.15)
+	end)
+	backBtn.MouseButton1Click:Connect(function()
+		sfx("Select")
+		showPage("user")
+	end)
+	local keyAvatarWrap = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 74),
+		Size = UDim2.fromOffset(84, 84),
+		BackgroundTransparency = 1,
+		Parent = keyPage.group,
+	})
+	local keyAvatar = create("ImageLabel", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Col.Card,
+		BorderSizePixel = 0,
+		Image = "",
+		Parent = keyAvatarWrap,
+	})
+	round(keyAvatar)
+	stroke(keyAvatar, WHITE, 2, 0.3)
+	table.insert(avatars, keyAvatar)
+	local keyName = text(keyPage.group, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 166),
+		Size = UDim2.new(0.6, 0, 0, 24),
+		Text = "",
+		FontFace = font(Enum.FontWeight.SemiBold),
+		TextSize = 19,
+		TextXAlignment = Enum.TextXAlignment.Center,
+	})
+	table.insert(names, keyName)
+	text(keyPage.group, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 214),
+		Size = UDim2.new(0.8, 0, 0, 34),
+		Text = kcfg.Title or "Enter your key",
+		FontFace = font(Enum.FontWeight.Light),
+		TextSize = 30,
+		TextXAlignment = Enum.TextXAlignment.Center,
+	})
+	text(keyPage.group, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 252),
+		Size = UDim2.new(0.8, 0, 0, 20),
+		Text = kcfg.Note or "Press Get Key, finish the steps, then paste your key here.",
+		TextSize = 15,
+		TextColor3 = Col.Sub,
+		TextXAlignment = Enum.TextXAlignment.Center,
+	})
+	local fieldPos = UDim2.new(0.5, -220, 0, 292)
+	local fieldSlot = create("Frame", {
+		Position = fieldPos,
+		Size = UDim2.fromOffset(440, 54),
+		BackgroundTransparency = 1,
+		Parent = keyPage.group,
+	})
+	local fieldGlow = softGlow(fieldSlot, 14, WHITE, 4, 4)
+	local field = create("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = BLACK,
+		BackgroundTransparency = 0.45,
+		BorderSizePixel = 0,
+		Parent = fieldSlot,
+	})
+	corner(field, 14)
+	local fieldStroke = stroke(field, WHITE, 1.5, 0.75)
+	local keyBox = create("TextBox", {
+		Position = UDim2.fromOffset(18, 0),
+		Size = UDim2.new(1, -36, 1, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		PlaceholderText = kcfg.Placeholder or "Paste your key",
+		PlaceholderColor3 = Col.Dim,
+		ClearTextOnFocus = false,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		FontFace = font(Enum.FontWeight.Medium),
+		TextSize = 17,
+		TextColor3 = WHITE,
+		Parent = field,
+	})
+	local keyStatus = text(keyPage.group, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 356),
+		Size = UDim2.new(0.8, 0, 0, 20),
+		Text = "",
+		TextSize = 14,
+		TextColor3 = Col.Sub,
+		TextXAlignment = Enum.TextXAlignment.Center,
+	})
+	function Loader:SetKeyStatus(t, isError)
+		keyStatus.Text = t or ""
+		keyStatus.TextColor3 = isError and Col.Error or Col.Sub
+	end
+	local keyButtons = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 394),
+		Size = UDim2.fromOffset(354, 46),
+		BackgroundTransparency = 1,
+		Parent = keyPage.group,
+	})
+	create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		Padding = UDim.new(0, 14),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = keyButtons,
+	})
+	local getKeyBtn, getKeyPop = makePill(keyButtons, kcfg.GetKeyText or "Get Key", false, 170, 1)
+	local checkBtn, checkPop = makePill(keyButtons, kcfg.CheckText or "Sign In", true, 170, 2)
+
+	keyBox.Focused:Connect(function()
+		tween(fieldStroke, { Transparency = 0 }, 0.15)
+		glowTo(fieldGlow, 0.8, 0.2)
+	end)
+
+	local checking = false
+	local function checkNow()
+		if checking then return end
+		local key = keyBox.Text:match("^%s*(.-)%s*$")
+		if key == "" then
+			Loader:SetKeyStatus("Enter a key first.", true)
+			shake(fieldSlot, fieldPos)
+			return
+		end
+		local function success()
+			Loader:SetKeyStatus("")
+			afterLogin = "Main"
+			showPage("main")
+			fire(kcfg.OnSuccess, key)
+		end
+		if not kcfg.Check then
+			success()
+			return
+		end
+		checking = true
+		checkBtn.Text = "Checking..."
+		task.spawn(function()
+			local ok, valid, reason = pcall(kcfg.Check, key)
+			checking = false
+			if not gui.Parent then return end
+			checkBtn.Text = kcfg.CheckText or "Sign In"
+			if ok and valid then
+				success()
+			else
+				Loader:SetKeyStatus(ok and (reason or "Invalid key.") or ("Error: " .. tostring(valid)), true)
+				shake(fieldSlot, fieldPos)
+				sfx("Select")
+			end
+		end)
+	end
+	keyBox.FocusLost:Connect(function(enterPressed)
+		tween(fieldStroke, { Transparency = 0.75 }, 0.15)
+		glowTo(fieldGlow, 0, 0.2)
+		if enterPressed then checkNow() end
+	end)
+	checkBtn.MouseButton1Click:Connect(function()
+		checkPop()
+		checkNow()
+	end)
+	getKeyBtn.MouseButton1Click:Connect(function()
+		getKeyPop()
+		local link = kcfg.GetKeyLink
+		if link then
+			if typeof(setclipboard) == "function" then
+				pcall(setclipboard, link)
+				Loader:SetKeyStatus("Key link copied, open it in your browser.")
+			else
+				Loader:SetKeyStatus(link)
+			end
+		end
+		fire(kcfg.OnGetKey)
+	end)
+	keyPage.onShow = function()
+		task.delay(0.3, function()
+			if currentName == "key" and keyBox.Text == "" then
+				pcall(function() keyBox:CaptureFocus() end)
+			end
+		end)
+	end
+
+	------------------------------------------------------------------
+	-- 3. Home: scripts as tiles, info chips, Load + Change Key
+	------------------------------------------------------------------
+	local mainPage = makePage("main")
+	local row = create("Frame", {
+		Position = UDim2.fromOffset(0, ROW_Y - 14),
+		Size = UDim2.new(1, 0, 0, TILE_BIG + 28),
+		BackgroundTransparency = 1,
+		ClipsDescendants = true,
+		Parent = mainPage.group,
+	})
+	local tileName = text(row, {
+		Position = UDim2.fromOffset(0, 14),
+		Size = UDim2.fromOffset(300, TILE_BIG),
+		Text = "",
+		FontFace = font(Enum.FontWeight.SemiBold),
+		TextSize = 20,
+	})
+	local heroTitle = text(mainPage.group, {
+		Position = UDim2.fromOffset(PAD, PAGE_TOP + 4),
+		Size = UDim2.new(1, -PAD * 2, 0, 58),
+		Text = "",
+		FontFace = font(Enum.FontWeight.Bold),
+		TextSize = 50,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	})
+	local infoRow = create("Frame", {
+		Position = UDim2.fromOffset(PAD, PAGE_TOP + 70),
+		Size = UDim2.new(1, -PAD * 2, 0, 34),
+		BackgroundTransparency = 1,
+		Parent = mainPage.group,
+	})
+	create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 10),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = infoRow,
+	})
+	local infoValues = {}
+	for i, rowInfo in ipairs(settings.Info or {}) do
+		local chip = create("Frame", {
+			Size = UDim2.fromOffset(0, 34),
+			AutomaticSize = Enum.AutomaticSize.X,
+			BackgroundColor3 = BLACK,
+			BackgroundTransparency = 0.55,
+			LayoutOrder = i,
+			Parent = infoRow,
+		})
+		corner(chip, 10)
+		stroke(chip, WHITE, 1, 0.88)
+		create("UIPadding", { PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14), Parent = chip })
+		create("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			Padding = UDim.new(0, 8),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Parent = chip,
+		})
+		text(chip, {
+			Size = UDim2.fromOffset(0, 34),
+			AutomaticSize = Enum.AutomaticSize.X,
+			Text = string.upper(tostring(rowInfo[1])),
+			FontFace = font(Enum.FontWeight.Medium),
+			TextSize = 11,
+			TextColor3 = Col.Dim,
+			LayoutOrder = 1,
+		})
+		infoValues[rowInfo[1]] = text(chip, {
+			Size = UDim2.fromOffset(0, 34),
+			AutomaticSize = Enum.AutomaticSize.X,
+			Text = tostring(rowInfo[2]),
+			FontFace = font(Enum.FontWeight.SemiBold),
+			TextSize = 14,
+			LayoutOrder = 2,
+		})
+	end
+	function Loader:SetInfo(label, value)
+		local l = infoValues[label]
+		if l then l.Text = tostring(value) end
+	end
+
+	local mainButtons = create("Frame", {
+		Position = UDim2.fromOffset(PAD, PAGE_TOP + 124),
+		Size = UDim2.new(1, -PAD * 2, 0, 46),
+		BackgroundTransparency = 1,
+		Parent = mainPage.group,
+	})
+	create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		Padding = UDim.new(0, 14),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = mainButtons,
+	})
+	local loadBtn, loadPop, loadSlot = makePill(mainButtons, "", true, 220, 1)
+	function Loader:SetButton(t)
+		loadBtn.Text = tostring(t)
+		loadSlot.Size = UDim2.fromOffset(math.clamp(estimateWidth(loadBtn.Text, 17) + 60, 200, 420), 46)
+	end
+	Loader:SetButton(settings.ButtonText or "Load Script")
+
+	-- Change Key: asks first, then forgets the key and opens the key screen
+	local function changeKey()
+		openDialog("Change key?", "Your saved key will be removed and you'll need to enter a new one.", {
+			{ "Change Key", function()
+				keyBox.Text = ""
+				afterLogin = "Key"
+				Loader:SetKeyStatus("Key removed. Enter a new one.")
+				showPage("key")
+				fire(kcfg.OnResetKey)
+			end, danger = true },
+			{ "Cancel" },
+		})
+	end
+	if hasKeyPage then
+		local changeBtn, changePop = makePill(mainButtons, "Change Key", false, 160, 2)
+		changeBtn.MouseButton1Click:Connect(function()
+			changePop()
+			changeKey()
+		end)
+	end
+
+	local function applyStreamer()
+		applyUser()
+		paintHide()
+	end
+	local function setStreamer(v, quiet)
+		streamer = v == true
+		Library:SetAnonymous(streamer)
+		applyStreamer()
+		if not quiet then fire(settings.OnStreamerMode, streamer) end
+	end
+	function Loader:SetStreamerMode(v)
+		setStreamer(v, true)
+	end
+	hideBtn.MouseButton1Click:Connect(function()
+		hidePop()
+		setStreamer(not streamer)
+	end)
+
+	accountBtn.MouseButton1Click:Connect(function()
+		sfx("Select")
+		local choices = {}
+		if hasKeyPage then table.insert(choices, { "Change Key", changeKey }) end
+		table.insert(choices, { streamer and "Show my info" or "Hide my info", function() setStreamer(not streamer) end })
+		if settings.OnRefresh then
+			table.insert(choices, { "Detect this game", function() fire(settings.OnRefresh) end })
+		end
+		table.insert(choices, { "Switch user", function() showPage("user") end })
+		table.insert(choices, { "Cancel" })
+		openDialog(displayName(), detectPremium() and "★ Premium" or nil, choices)
+	end)
+
+	-- Script tiles (same look and movement as the hub's game row)
+	local options = settings.Options or {}
+	local current = settings.CurrentOption or options[1]
+	local tiles = {}
+	local function layoutTiles(animated)
+		local s = 1
+		for i, t in ipairs(tiles) do
+			if t.option == current then s = i end
+		end
+		local sel = tiles[s]
+		if not sel then
+			tileName.Text = ""
+			heroTitle.Text = tostring(current or "")
+			return
+		end
+		local prevVisible = math.min(s - 1, 2)
+		local xSel = PAD + prevVisible * (TILE + TILE_GAP)
+		local nameW = estimateWidth(sel.label, 20)
+		local afterName = xSel + TILE_BIG + 18 + nameW + 28
+		for i, t in ipairs(tiles) do
+			local x, size
+			if i < s then
+				x, size = xSel - (s - i) * (TILE + TILE_GAP), TILE
+			elseif i == s then
+				x, size = xSel, TILE_BIG
+			else
+				x, size = afterName + (i - s - 1) * (TILE + TILE_GAP), TILE
+			end
+			local props = { Position = UDim2.fromOffset(x, 14), Size = UDim2.fromOffset(size, size) }
+			local focused = i == s
+			if animated then
+				tween(t.tile, props, 0.4)
+				tween(t.dim, { BackgroundTransparency = focused and 1 or 0.35 }, 0.25)
+				tween(t.ring, { Transparency = focused and 0 or 1 }, 0.25)
+			else
+				t.tile.Position, t.tile.Size = props.Position, props.Size
+				t.dim.BackgroundTransparency = focused and 1 or 0.35
+				t.ring.Transparency = focused and 0 or 1
+			end
+		end
+		tileName.Text = sel.label
+		tileName.Size = UDim2.fromOffset(nameW + 10, TILE_BIG)
+		local namePos = UDim2.fromOffset(xSel + TILE_BIG + 18, 14)
+		heroTitle.Text = sel.label
+		if animated then
+			tileName.TextTransparency = 1
+			tileName.Position = namePos + UDim2.fromOffset(18, 0)
+			tween(tileName, { TextTransparency = 0, Position = namePos }, 0.45)
+			heroTitle.TextTransparency = 1
+			heroTitle.Position = UDim2.fromOffset(PAD + 30, PAGE_TOP + 4)
+			tween(heroTitle, { TextTransparency = 0, Position = UDim2.fromOffset(PAD, PAGE_TOP + 4) }, 0.55)
+		else
+			tileName.Position = namePos
+		end
+	end
+	local function choose(opt, userPicked)
+		if opt == current then return end
+		current = opt
+		layoutTiles(true)
+		if userPicked then
+			sfx("Move")
+			fire(settings.OnSelect, opt)
+		end
+	end
+	local function buildTiles()
+		for _, t in ipairs(tiles) do t.tile:Destroy() end
+		tiles = {}
+		for _, opt in ipairs(options) do
+			local label = tostring(opt)
+			local c1, c2 = colorsFor(label)
+			local tile = create("TextButton", {
+				Position = UDim2.fromOffset(BASE_W + 100, 14),
+				Size = UDim2.fromOffset(TILE, TILE),
+				BackgroundColor3 = WHITE,
+				AutoButtonColor = false,
+				Text = "",
+				BorderSizePixel = 0,
+				Parent = row,
+			})
+			corner(tile, 12)
+			create("UIGradient", { Rotation = 45, Color = ColorSequence.new(c1, c2), Parent = tile })
+			local lbl = text(tile, {
+				Size = UDim2.fromScale(1, 1),
+				Text = initials(label),
+				FontFace = font(Enum.FontWeight.Bold),
+				TextScaled = true,
+				TextXAlignment = Enum.TextXAlignment.Center,
+			})
+			create("UIPadding", {
+				PaddingTop = UDim.new(0.24, 0), PaddingBottom = UDim.new(0.24, 0),
+				PaddingLeft = UDim.new(0.14, 0), PaddingRight = UDim.new(0.14, 0),
+				Parent = lbl,
+			})
+			local dimFrame = create("Frame", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundColor3 = BLACK,
+				BackgroundTransparency = 0.35,
+				BorderSizePixel = 0,
+				Parent = tile,
+			})
+			corner(dimFrame, 12)
+			local ringFrame = create("Frame", {
+				AnchorPoint = CENTER,
+				Position = UDim2.fromScale(0.5, 0.5),
+				Size = UDim2.new(1, 10, 1, 10),
+				BackgroundTransparency = 1,
+				Parent = tile,
+			})
+			corner(ringFrame, 16)
+			local ring = stroke(ringFrame, WHITE, 2.5, 1)
+			local sc = create("UIScale", { Parent = tile })
+			local t = { tile = tile, dim = dimFrame, ring = ring, option = opt, label = label }
+			tile.MouseEnter:Connect(function()
+				if current ~= opt then
+					tween(dimFrame, { BackgroundTransparency = 0.1 }, 0.15)
+					tween(sc, { Scale = 1.06 }, 0.2)
+				end
+			end)
+			tile.MouseLeave:Connect(function()
+				tween(dimFrame, { BackgroundTransparency = current == opt and 1 or 0.35 }, 0.15)
+				tween(sc, { Scale = 1 }, 0.2)
+			end)
+			tile.MouseButton1Click:Connect(function()
+				tween(sc, { Scale = 1 }, 0.3, Enum.EasingStyle.Back)
+				choose(opt, true)
+			end)
+			table.insert(tiles, t)
+		end
+		layoutTiles(false)
+	end
+	buildTiles()
+
+	function Loader:SetOptions(list, cur)
+		options = list or {}
+		current = cur or options[1]
+		buildTiles()
+	end
+	function Loader:SetOption(opt)
+		if opt == current then return end
+		current = opt
+		layoutTiles(true)
+	end
+	function Loader:GetOption()
+		return current
+	end
+
+	loadBtn.MouseButton1Click:Connect(function()
+		loadPop()
+		fire(settings.OnLoad, current)
+	end)
+	mainPage.onShow = function()
+		heroTitle.TextTransparency = 1
+		heroTitle.Position = UDim2.fromOffset(PAD + 30, PAGE_TOP + 4)
+		tween(heroTitle, { TextTransparency = 0, Position = UDim2.fromOffset(PAD, PAGE_TOP + 4) }, 0.6)
+		mainButtons.Position = UDim2.fromOffset(PAD, PAGE_TOP + 140)
+		tween(mainButtons, { Position = UDim2.fromOffset(PAD, PAGE_TOP + 124) }, 0.6)
+	end
+
+	function Loader:ShowMain()
+		afterLogin = "Main"
+		paintUserSub()
+		if currentName ~= "user" then showPage("main") end
+	end
+	function Loader:ShowKey(message)
+		afterLogin = "Key"
+		paintUserSub()
+		if message then Loader:SetKeyStatus(message, true) end
+		if currentName ~= "user" then showPage("key") end
+	end
+
+	applyStreamer()
+
+	------------------------------------------------------------------
+	-- Keys: Enter signs in, Left / Right pick a script, Escape goes back / closes the dialog
+	------------------------------------------------------------------
+	track(UserInputService.InputBegan:Connect(function(input, processed)
+		local kc = input.KeyCode
+		if dialogOpen and (kc == Enum.KeyCode.Escape or kc == Enum.KeyCode.ButtonB) then
+			closeDialog()
+			return
+		end
+		if processed or UserInputService:GetFocusedTextBox() then return end
+		if currentName == "user" and (kc == Enum.KeyCode.Return or kc == Enum.KeyCode.ButtonA) then
+			signIn()
+		elseif currentName == "key" and (kc == Enum.KeyCode.Escape or kc == Enum.KeyCode.ButtonB) then
+			showPage("user")
+		elseif currentName == "main" and not dialogOpen and #tiles > 0 then
+			local i = 1
+			for n, t in ipairs(tiles) do
+				if t.option == current then i = n end
+			end
+			if kc == Enum.KeyCode.Left or kc == Enum.KeyCode.DPadLeft then
+				choose(tiles[math.max(i - 1, 1)].option, true)
+			elseif kc == Enum.KeyCode.Right or kc == Enum.KeyCode.DPadRight then
+				choose(tiles[math.min(i + 1, #tiles)].option, true)
+			end
+		end
+	end))
+
+	------------------------------------------------------------------
+	-- Show / hide, per-frame motion
+	------------------------------------------------------------------
+	local shown = num(0)
+	local baseScale = 1
+	local function applyShown()
+		local v = shown.Value
+		uiScale.Scale = baseScale * (1.045 - 0.045 * v)
+		screen.GroupTransparency = 1 - v
+		dim.BackgroundTransparency = 1 - (fullscreen and 0 or 0.35) * v
+		glowSet(outerGlow, fullscreen and 0 or v * 0.6)
+	end
+	local function layoutHolder()
+		local cam = workspace.CurrentCamera
+		local vp = cam and cam.ViewportSize or Vector2.new(1920, 1080)
+		if fullscreen then
+			baseScale = vp.Y / BASE_H
+			holder.Size = UDim2.fromOffset(math.ceil(vp.X / baseScale), BASE_H)
+		else
+			baseScale = math.min(settings.Scale or 1, (vp.X - 40) / BASE_W, (vp.Y - 40) / BASE_H)
+		end
+		applyShown()
+	end
+	shown.Changed:Connect(applyShown)
+	layoutHolder()
+	if workspace.CurrentCamera then
+		track(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(layoutHolder))
+	end
+
+	local t0 = os.clock()
+	local lastSecond = 0
+	track(RunService.RenderStepped:Connect(function(dt)
+		if shown.Value <= 0 then return end
+		local t = os.clock() - t0
+		bgGrad.Rotation = 100 + math.sin(t * 0.1) * 10
+		blobs[1].frame.Position = UDim2.fromScale(0.76 + math.sin(t * 0.13 + blobs[1].ph) * 0.08, 0.3 + math.cos(t * 0.11) * 0.1)
+		blobs[2].frame.Position = UDim2.fromScale(0.24 + math.sin(t * 0.09 + blobs[2].ph) * 0.1, 0.82 + math.cos(t * 0.15) * 0.08)
+		for _, b in ipairs(bokeh) do
+			b.y -= b.speed * dt
+			if b.y < -0.05 then
+				b.y = 1.05
+				b.x = math.random()
+			end
+			b.f.Position = UDim2.fromScale(b.x + math.sin(t * 0.3 + b.ph) * 0.01, b.y)
+			b.f.BackgroundTransparency = 1 - b.alpha * (0.5 + 0.5 * math.sin(t * b.tw + b.ph))
+		end
+		-- the user ring breathes while it waits for you
+		if currentName == "user" and not userHover and not signing then
+			userRing.Transparency = 0.35 + 0.3 * (0.5 + 0.5 * math.sin(t * 2.4))
+			glowSet(userGlow, 0.25 + 0.25 * math.sin(t * 2.4))
+		end
+		if t - lastSecond > 1 then
+			lastSecond = t
+			clock.Text = os.date("%H:%M")
+		end
+	end))
+
+	function Loader:Destroy()
+		if gui.Parent then gui:Destroy() end
+	end
+	function Loader:Close()
+		-- closed without loading anything: the next window may play its own boot animation again
+		env().GuiLibrarySplashShown = nil
+		local tw = tween(shown, { Value = 0 }, 0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		tw.Completed:Connect(function() Loader:Destroy() end)
+	end
+	closeBtn.MouseButton1Click:Connect(function()
+		sfx("Select")
+		Loader:Close()
+		fire(settings.OnClose)
+	end)
+	gui.Destroying:Connect(function()
+		for _, c in ipairs(conns) do c:Disconnect() end
+		shown:Destroy()
+	end)
+
+	-- Start on the user screen: boot animation first (if asked), then zoom in
+	showPage("user")
+	local function reveal()
+		if gui.Parent then
+			tween(shown, { Value = 1 }, 0.6, Enum.EasingStyle.Quint)
+		end
+	end
+	if type(settings.Splash) == "table" then
+		env().GuiLibrarySplashShown = true -- the script the loader starts skips its own boot animation
+		local opts = {}
+		for k, v in pairs(settings.Splash) do opts[k] = v end
+		opts.Welcome = false -- this sign-in screen is the welcome screen
+		playSplash(opts, hubName, reveal)
+	else
+		reveal()
+	end
+
+	return Loader
 end
 
 return Library
