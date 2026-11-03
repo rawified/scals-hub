@@ -105,12 +105,12 @@ Library.Sounds = {
 local WHITE = Color3.new(1, 1, 1)
 local BLACK = Color3.new(0, 0, 0)
 local Col = {
-	Sub = Color3.fromRGB(198, 204, 218),
-	Dim = Color3.fromRGB(132, 140, 158),
-	Card = Color3.fromRGB(26, 30, 42),
-	CardHover = Color3.fromRGB(46, 52, 68),
-	Panel = Color3.fromRGB(20, 23, 32),
-	Track = Color3.fromRGB(78, 84, 100),
+	Sub = Color3.fromRGB(222, 232, 248),
+	Dim = Color3.fromRGB(176, 192, 220),
+	Card = Color3.fromRGB(255, 255, 255),      -- cards are frosted glass: white at high transparency
+	CardHover = Color3.fromRGB(255, 255, 255),
+	Panel = Color3.fromRGB(34, 52, 92),        -- menus / dialogs / notifications
+	Track = Color3.fromRGB(120, 140, 175),
 	Gold = Color3.fromRGB(255, 196, 64),
 	Error = Color3.fromRGB(240, 95, 95),
 }
@@ -122,6 +122,7 @@ local ROW_Y = 66                 -- top of the tile row
 local PAGE_TOP = 188             -- where a page's content starts
 local HERO_H = 196               -- big title area
 local CARD_W, CARD_H, CARD_GAP = 210, 124, 14
+local CARD_ALPHA, CARD_ALPHA_HOVER = 0.84, 0.72 -- glass transparency (lower = more solid)
 
 local ck, nk = ColorSequenceKeypoint.new, NumberSequenceKeypoint.new
 local CENTER = Vector2.new(0.5, 0.5)
@@ -223,7 +224,7 @@ local function colorsFor(name)
 		h = (h * 31 + string.byte(name, i)) % 3600
 	end
 	local hue = h / 3600
-	return Color3.fromHSV(hue, 0.62, 0.9), Color3.fromHSV((hue + 0.07) % 1, 0.85, 0.4)
+	return Color3.fromHSV(hue, 0.55, 0.95), Color3.fromHSV((hue + 0.07) % 1, 0.75, 0.62)
 end
 
 local function initials(name)
@@ -736,9 +737,9 @@ local function playSplash(opts, windowName, onReveal)
 			create("UIGradient", {
 				Rotation = 90,
 				Color = ColorSequence.new({
-					ck(0, Color3.fromRGB(10, 40, 104)),
-					ck(0.55, Color3.fromRGB(4, 16, 46)),
-					ck(1, Color3.fromRGB(1, 3, 12)),
+					ck(0, Color3.fromRGB(86, 156, 240)),
+					ck(0.55, Color3.fromRGB(34, 96, 196)),
+					ck(1, Color3.fromRGB(14, 46, 120)),
 				}),
 				Parent = wbg,
 			})
@@ -1190,7 +1191,7 @@ function Library:CreateWindow(settings)
 	local outerGlow = softGlow(holder, 20, accent:Lerp(WHITE, 0.3), 6, 6)
 	local screen = create("CanvasGroup", {
 		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = Color3.fromRGB(4, 8, 20),
+		BackgroundColor3 = Color3.fromRGB(30, 60, 120),
 		BorderSizePixel = 0,
 		GroupTransparency = 1,
 		Parent = holder,
@@ -1246,7 +1247,7 @@ function Library:CreateWindow(settings)
 					Position = UDim2.fromScale(0.5, 0.5),
 					Size = UDim2.fromScale(j / 7, j / 7),
 					BackgroundColor3 = WHITE,
-					BackgroundTransparency = 0.955,
+					BackgroundTransparency = 0.94,
 					BorderSizePixel = 0,
 					Parent = blob,
 				})
@@ -1263,9 +1264,9 @@ function Library:CreateWindow(settings)
 		local nextI = 3 - bgFront
 		local A, B = bgLayers[bgFront], bgLayers[nextI]
 		B.grad.Color = ColorSequence.new({
-			ck(0, e.c2:Lerp(e.c1, 0.25)),
-			ck(0.55, e.c2:Lerp(BLACK, 0.55)),
-			ck(1, Color3.fromRGB(2, 3, 8)),
+			ck(0, e.c2:Lerp(e.c1, 0.45)),
+			ck(0.55, e.c2),
+			ck(1, e.c2:Lerp(BLACK, 0.45)),
 		})
 		B.img.Image = e.background or ""
 		B.img.Visible = e.background ~= nil
@@ -1300,9 +1301,9 @@ function Library:CreateWindow(settings)
 		create("UIGradient", { Rotation = rotation, Transparency = NumberSequence.new(seq), Parent = f })
 		return f
 	end
-	shade(0, { nk(0, 0.3), nk(0.6, 0.85), nk(1, 1) })
-	shade(90, { nk(0, 1), nk(0.55, 0.8), nk(1, 0.2) })
-	shade(90, { nk(0, 0.45), nk(1, 1) }, { Size = UDim2.new(1, 0, 0, 120) })
+	shade(0, { nk(0, 0.7), nk(0.6, 0.95), nk(1, 1) })
+	shade(90, { nk(0, 1), nk(0.6, 0.92), nk(1, 0.6) })
+	shade(90, { nk(0, 0.75), nk(1, 1) }, { Size = UDim2.new(1, 0, 0, 120) })
 	local scrollDim = create("Frame", {
 		Size = UDim2.fromScale(1, 1),
 		BackgroundColor3 = BLACK,
@@ -1350,7 +1351,7 @@ function Library:CreateWindow(settings)
 	})
 	create("UIGradient", {
 		Rotation = 90,
-		Transparency = NumberSequence.new({ nk(0, 0.05), nk(0.6, 0.35), nk(1, 1) }),
+		Transparency = NumberSequence.new({ nk(0, 0.3), nk(0.6, 0.6), nk(1, 1) }),
 		Parent = topScrollShade,
 	})
 
@@ -1805,7 +1806,7 @@ function Library:CreateWindow(settings)
 		modal.BackgroundTransparency = 1
 		panel.GroupTransparency = 1
 		panelScale.Scale = 1.06
-		tween(modal, { BackgroundTransparency = 0.45 }, 0.25)
+		tween(modal, { BackgroundTransparency = 0.65 }, 0.25)
 		tween(panel, { GroupTransparency = 0 }, 0.3)
 		tween(panelScale, { Scale = 1 }, 0.35)
 	end
@@ -1844,12 +1845,12 @@ function Library:CreateWindow(settings)
 			local focused = i == s
 			if animated then
 				tween(e.tile, props, 0.4)
-				tween(e.tileDim, { BackgroundTransparency = focused and 1 or 0.35 }, 0.25)
+				tween(e.tileDim, { BackgroundTransparency = focused and 1 or 0.6 }, 0.25)
 				tween(e.ringStroke, { Transparency = focused and 0 or 1 }, 0.25)
 			else
 				e.tile.Position = props.Position
 				e.tile.Size = props.Size
-				e.tileDim.BackgroundTransparency = focused and 1 or 0.35
+				e.tileDim.BackgroundTransparency = focused and 1 or 0.6
 				e.ringStroke.Transparency = focused and 0 or 1
 			end
 		end
@@ -1872,8 +1873,8 @@ function Library:CreateWindow(settings)
 		row.GroupTransparency = k
 		row.Position = UDim2.fromOffset(0, ROW_Y - 14 - k * 34)
 		row.Visible = k < 0.98
-		scrollDim.BackgroundTransparency = 1 - 0.45 * k
-		topScrollShade.BackgroundTransparency = 1 - 0.9 * k
+		scrollDim.BackgroundTransparency = 1 - 0.2 * k
+		topScrollShade.BackgroundTransparency = 1 - 0.6 * k
 	end
 
 	local function paintNav()
@@ -1939,7 +1940,7 @@ function Library:CreateWindow(settings)
 		local v = shown.Value
 		uiScale.Scale = baseScale * (1.045 - 0.045 * v)
 		screen.GroupTransparency = 1 - v
-		dim.BackgroundTransparency = 1 - (fullscreen and 0 or 0.35) * v
+		dim.BackgroundTransparency = 1 - (fullscreen and 0 or 0.25) * v
 		glowSet(outerGlow, fullscreen and 0 or v * 0.6)
 		if blur then blur.Size = 14 * v end
 	end
@@ -2180,7 +2181,7 @@ function Library:CreateWindow(settings)
 		local tileDim = create("Frame", {
 			Size = UDim2.fromScale(1, 1),
 			BackgroundColor3 = BLACK,
-			BackgroundTransparency = 0.35,
+			BackgroundTransparency = 0.6,
 			BorderSizePixel = 0,
 			Parent = tile,
 		})
@@ -2222,7 +2223,7 @@ function Library:CreateWindow(settings)
 			end
 		end)
 		tile.MouseLeave:Connect(function()
-			tween(tileDim, { BackgroundTransparency = selected == e and 1 or 0.35 }, 0.15)
+			tween(tileDim, { BackgroundTransparency = selected == e and 1 or 0.6 }, 0.15)
 			tween(tileScale, { Scale = 1 }, 0.2)
 		end)
 		tile.MouseButton1Down:Connect(function()
@@ -2332,8 +2333,8 @@ function Library:CreateWindow(settings)
 			local glow = softGlow(slot, 12, WHITE, 4, 4)
 			local b = create("TextButton", {
 				Size = UDim2.fromScale(1, 1),
-				BackgroundColor3 = primary and WHITE or BLACK,
-				BackgroundTransparency = primary and 0 or 0.45,
+				BackgroundColor3 = WHITE,
+				BackgroundTransparency = primary and 0 or 0.8,
 				AutoButtonColor = false,
 				Text = label,
 				FontFace = font(Enum.FontWeight.SemiBold),
@@ -2356,7 +2357,7 @@ function Library:CreateWindow(settings)
 				tween(sc, { Scale = 1 }, 0.25)
 				glowTo(glow, 0)
 				if not primary then
-					tween(b, { BackgroundColor3 = BLACK, BackgroundTransparency = 0.45, TextColor3 = WHITE }, 0.15)
+					tween(b, { BackgroundColor3 = WHITE, BackgroundTransparency = 0.8, TextColor3 = WHITE }, 0.15)
 				end
 			end)
 			local function pop()
@@ -2422,8 +2423,8 @@ function Library:CreateWindow(settings)
 			LayoutOrder = 3,
 			Size = UDim2.fromOffset(0, 46),
 			AutomaticSize = Enum.AutomaticSize.X,
-			BackgroundColor3 = BLACK,
-			BackgroundTransparency = 0.55,
+			BackgroundColor3 = WHITE,
+			BackgroundTransparency = 0.82,
 			Text = "0 items",
 			FontFace = font(Enum.FontWeight.Medium),
 			TextSize = 15,
@@ -2522,12 +2523,12 @@ function Library:CreateWindow(settings)
 			local face = create("Frame", {
 				Size = UDim2.fromScale(1, 1),
 				BackgroundColor3 = Col.Card,
-				BackgroundTransparency = 0.3,
+				BackgroundTransparency = CARD_ALPHA,
 				BorderSizePixel = 0,
 				Parent = cardHolder,
 			})
 			corner(face, 14)
-			stroke(face, WHITE, 1, 0.9)
+			stroke(face, WHITE, 1, 0.75)
 			local ringFrame = create("Frame", {
 				AnchorPoint = CENTER,
 				Position = UDim2.fromScale(0.5, 0.5),
@@ -2577,7 +2578,7 @@ function Library:CreateWindow(settings)
 				tween(ringStroke, { Transparency = v and 0 or 1 }, 0.18)
 				tween(face, {
 					BackgroundColor3 = v and Col.CardHover or Col.Card,
-					BackgroundTransparency = v and 0.12 or 0.3,
+					BackgroundTransparency = v and CARD_ALPHA_HOVER or CARD_ALPHA,
 				}, 0.2)
 				glowTo(glow, v and 1 or 0, 0.28)
 				if v then sfx("Move") end
@@ -2629,7 +2630,7 @@ function Library:CreateWindow(settings)
 				local lockLayer = create("TextButton", {
 					Size = UDim2.fromScale(1, 1),
 					BackgroundColor3 = BLACK,
-					BackgroundTransparency = 0.45,
+					BackgroundTransparency = 0.6,
 					AutoButtonColor = false,
 					Text = "",
 					ZIndex = 10,
@@ -2692,7 +2693,7 @@ function Library:CreateWindow(settings)
 				Size = UDim2.fromOffset(0, 22),
 				AutomaticSize = Enum.AutomaticSize.X,
 				BackgroundColor3 = BLACK,
-				BackgroundTransparency = 0.45,
+				BackgroundTransparency = 0.65,
 				Text = key.Name,
 				FontFace = font(Enum.FontWeight.SemiBold),
 				TextSize = 12,
@@ -3049,7 +3050,7 @@ function Library:CreateWindow(settings)
 				Position = UDim2.new(0, 14, 1, -14),
 				Size = UDim2.new(1, -28, 0, 34),
 				BackgroundColor3 = BLACK,
-				BackgroundTransparency = 0.5,
+				BackgroundTransparency = 0.7,
 				BorderSizePixel = 0,
 				Parent = card.face,
 			})
@@ -3404,8 +3405,8 @@ local function makePill(parent, label, primary, width, order)
 	local glow = softGlow(slot, 12, WHITE, 4, 4)
 	local b = create("TextButton", {
 		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = primary and WHITE or BLACK,
-		BackgroundTransparency = primary and 0 or 0.45,
+		BackgroundColor3 = WHITE,
+		BackgroundTransparency = primary and 0 or 0.8,
 		AutoButtonColor = false,
 		Text = label,
 		FontFace = font(Enum.FontWeight.SemiBold),
@@ -3429,7 +3430,7 @@ local function makePill(parent, label, primary, width, order)
 		tween(sc, { Scale = 1 }, 0.25)
 		glowTo(glow, 0)
 		if not primary then
-			tween(b, { BackgroundColor3 = BLACK, BackgroundTransparency = 0.45, TextColor3 = WHITE }, 0.15)
+			tween(b, { BackgroundColor3 = WHITE, BackgroundTransparency = 0.8, TextColor3 = WHITE }, 0.15)
 		end
 	end)
 	local function pop()
@@ -3503,9 +3504,9 @@ function Library:CreateLoader(settings)
 	local bgGrad = create("UIGradient", {
 		Rotation = 100,
 		Color = ColorSequence.new({
-			ck(0, Color3.fromRGB(12, 46, 116)),
-			ck(0.5, Color3.fromRGB(5, 18, 52)),
-			ck(1, Color3.fromRGB(1, 3, 12)),
+			ck(0, Color3.fromRGB(86, 156, 240)),
+			ck(0.5, Color3.fromRGB(34, 96, 196)),
+			ck(1, Color3.fromRGB(14, 46, 120)),
 		}),
 		Parent = screen,
 	})
@@ -3525,8 +3526,8 @@ function Library:CreateLoader(settings)
 				AnchorPoint = CENTER,
 				Position = UDim2.fromScale(0.5, 0.5),
 				Size = UDim2.fromScale(j / 7, j / 7),
-				BackgroundColor3 = Color3.fromRGB(110, 170, 255),
-				BackgroundTransparency = 0.96,
+				BackgroundColor3 = Color3.fromRGB(200, 228, 255),
+				BackgroundTransparency = 0.93,
 				BorderSizePixel = 0,
 				Parent = blob,
 			})
@@ -3845,7 +3846,7 @@ function Library:CreateLoader(settings)
 		modal.BackgroundTransparency = 1
 		panel.GroupTransparency = 1
 		panelScale.Scale = 1.06
-		tween(modal, { BackgroundTransparency = 0.45 }, 0.25)
+		tween(modal, { BackgroundTransparency = 0.65 }, 0.25)
 		tween(panel, { GroupTransparency = 0 }, 0.3)
 		tween(panelScale, { Scale = 1 }, 0.35)
 	end
@@ -4123,8 +4124,8 @@ function Library:CreateLoader(settings)
 	local fieldGlow = softGlow(fieldSlot, 14, WHITE, 4, 4)
 	local field = create("Frame", {
 		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = BLACK,
-		BackgroundTransparency = 0.45,
+		BackgroundColor3 = WHITE,
+		BackgroundTransparency = 0.82,
 		BorderSizePixel = 0,
 		Parent = fieldSlot,
 	})
@@ -4289,8 +4290,8 @@ function Library:CreateLoader(settings)
 		local chip = create("Frame", {
 			Size = UDim2.fromOffset(0, 34),
 			AutomaticSize = Enum.AutomaticSize.X,
-			BackgroundColor3 = BLACK,
-			BackgroundTransparency = 0.55,
+			BackgroundColor3 = WHITE,
+			BackgroundTransparency = 0.82,
 			LayoutOrder = i,
 			Parent = infoRow,
 		})
@@ -4430,11 +4431,11 @@ function Library:CreateLoader(settings)
 			local focused = i == s
 			if animated then
 				tween(t.tile, props, 0.4)
-				tween(t.dim, { BackgroundTransparency = focused and 1 or 0.35 }, 0.25)
+				tween(t.dim, { BackgroundTransparency = focused and 1 or 0.6 }, 0.25)
 				tween(t.ring, { Transparency = focused and 0 or 1 }, 0.25)
 			else
 				t.tile.Position, t.tile.Size = props.Position, props.Size
-				t.dim.BackgroundTransparency = focused and 1 or 0.35
+				t.dim.BackgroundTransparency = focused and 1 or 0.6
 				t.ring.Transparency = focused and 0 or 1
 			end
 		end
@@ -4494,7 +4495,7 @@ function Library:CreateLoader(settings)
 			local dimFrame = create("Frame", {
 				Size = UDim2.fromScale(1, 1),
 				BackgroundColor3 = BLACK,
-				BackgroundTransparency = 0.35,
+				BackgroundTransparency = 0.6,
 				BorderSizePixel = 0,
 				Parent = tile,
 			})
@@ -4517,7 +4518,7 @@ function Library:CreateLoader(settings)
 				end
 			end)
 			tile.MouseLeave:Connect(function()
-				tween(dimFrame, { BackgroundTransparency = current == opt and 1 or 0.35 }, 0.15)
+				tween(dimFrame, { BackgroundTransparency = current == opt and 1 or 0.6 }, 0.15)
 				tween(sc, { Scale = 1 }, 0.2)
 			end)
 			tile.MouseButton1Click:Connect(function()
@@ -4606,7 +4607,7 @@ function Library:CreateLoader(settings)
 		local v = shown.Value
 		uiScale.Scale = baseScale * (1.045 - 0.045 * v)
 		screen.GroupTransparency = 1 - v
-		dim.BackgroundTransparency = 1 - (fullscreen and 0 or 0.35) * v
+		dim.BackgroundTransparency = 1 - (fullscreen and 0 or 0.25) * v
 		glowSet(outerGlow, fullscreen and 0 or v * 0.6)
 	end
 	local function layoutHolder()
