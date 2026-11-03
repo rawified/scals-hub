@@ -79,7 +79,7 @@
 	CreateWindow({ ChangeKey = function() end, SignOut = function() end }) adds those two entries.
 
 	Window:SetVisible(bool) / :Toggle() / :SetToggleKey(KeyCode) / :SelectTab(name) / :Destroy()
-	Library:Notify({Title, Content, Duration, Icon = "rbxassetid://..."})
+	Library:Notify({Title, Content, Duration, Icon = "rbxassetid://...", Prefix = "🏆"})
 	Library:Unload() / Library:OnUnload(fn) / Library:SetAnonymous(bool)
 
 	Shared with every script that uses this library (Settings tile, saved in GuiLibrary/PS5Settings.json):
@@ -116,7 +116,9 @@ local Col = {
 	Dim = Color3.fromRGB(176, 192, 220),
 	Card = Color3.fromRGB(255, 255, 255),      -- cards are frosted glass: white at high transparency
 	CardHover = Color3.fromRGB(255, 255, 255),
-	Panel = Color3.fromRGB(34, 52, 92),        -- menus / dialogs / notifications
+	Panel = Color3.fromRGB(34, 52, 92),        -- dialogs
+	Ps = Color3.fromRGB(30, 31, 36),           -- PS5 charcoal: notifications + option menus
+	PsText = Color3.fromRGB(168, 170, 178),    -- PS5 grey subtitle text
 	Track = Color3.fromRGB(120, 140, 175),
 	Gold = Color3.fromRGB(255, 196, 64),
 	Error = Color3.fromRGB(240, 95, 95),
@@ -560,7 +562,7 @@ function Library:Notify(o)
 		notifyHolder = create("Frame", {
 			AnchorPoint = Vector2.new(1, 0),
 			Position = UDim2.new(1, -20, 0, 20),
-			Size = UDim2.new(0, 340, 1, -40),
+			Size = UDim2.new(0, 380, 1, -40),
 			BackgroundTransparency = 1,
 			Parent = notifyGui,
 		})
@@ -568,7 +570,7 @@ function Library:Notify(o)
 	end
 	notifyOrder -= 1
 	local duration = o.Duration or 4
-	local H = 78
+	local H = 64
 
 	-- The slot opens up first so older notifications slide down instead of jumping
 	local slot = create("Frame", {
@@ -577,40 +579,38 @@ function Library:Notify(o)
 		LayoutOrder = notifyOrder,
 		Parent = notifyHolder,
 	})
+	-- PS5 style: dark charcoal pill, square icon, bold title, grey subtitle
 	local card = create("CanvasGroup", {
 		Size = UDim2.new(1, 0, 0, H),
-		Position = UDim2.fromOffset(380, 0),
+		Position = UDim2.fromOffset(0, -18),
 		GroupTransparency = 1,
-		BackgroundColor3 = Col.Panel,
-		BackgroundTransparency = 0.04,
+		BackgroundColor3 = Col.Ps,
+		BackgroundTransparency = 0.06,
 		BorderSizePixel = 0,
 		Parent = slot,
 	})
-	corner(card, 16)
+	corner(card, 14)
 	local edge = create("Frame", {
 		Size = UDim2.new(1, -2, 1, -2),
 		Position = UDim2.fromOffset(1, 1),
 		BackgroundTransparency = 1,
 		Parent = card,
 	})
-	corner(edge, 15)
-	stroke(edge, WHITE, 1, 0.88)
+	corner(edge, 13)
+	stroke(edge, WHITE, 1, 0.93)
 
 	local icon = create("Frame", {
-		Position = UDim2.fromOffset(16, 17),
+		Position = UDim2.fromOffset(12, 10),
 		Size = UDim2.fromOffset(44, 44),
 		BackgroundColor3 = WHITE,
 		BorderSizePixel = 0,
 		Parent = card,
 	})
-	corner(icon, 11)
-	create("UIGradient", {
-		Rotation = 45,
-		Color = ColorSequence.new(Library.Accent:Lerp(WHITE, 0.25), Library.Accent:Lerp(BLACK, 0.35)),
-		Parent = icon,
-	})
+	corner(icon, 6)
+	stroke(icon, WHITE, 1, 0.8)
 	local iconImage = resolveImage(o.Icon)
 	if iconImage then
+		icon.BackgroundColor3 = Col.Ps:Lerp(BLACK, 0.4)
 		local img = create("ImageLabel", {
 			Size = UDim2.fromScale(1, 1),
 			BackgroundTransparency = 1,
@@ -618,53 +618,51 @@ function Library:Notify(o)
 			ScaleType = Enum.ScaleType.Crop,
 			Parent = icon,
 		})
-		corner(img, 11)
+		corner(img, 6)
 	else
+		create("UIGradient", {
+			Rotation = 45,
+			Color = ColorSequence.new(Library.Accent:Lerp(WHITE, 0.25), Library.Accent:Lerp(BLACK, 0.35)),
+			Parent = icon,
+		})
 		text(icon, {
 			Size = UDim2.fromScale(1, 1),
 			Text = "!",
 			FontFace = font(Enum.FontWeight.Bold),
-			TextSize = 22,
+			TextSize = 20,
 			TextXAlignment = Enum.TextXAlignment.Center,
 		})
 	end
+	local hasContent = o.Content ~= nil and tostring(o.Content) ~= ""
+	local title = tostring(o.Title or "Notification")
+	if o.Prefix then title = tostring(o.Prefix) .. " " .. title end -- e.g. Prefix = "🏆"
 	text(card, {
-		Position = UDim2.fromOffset(74, 14),
-		Size = UDim2.new(1, -90, 0, 20),
-		Text = o.Title or "Notification",
-		FontFace = font(Enum.FontWeight.Bold),
-		TextSize = 15,
+		Position = UDim2.fromOffset(68, hasContent and 11 or 0),
+		Size = UDim2.new(1, -82, 0, hasContent and 22 or H),
+		Text = title,
+		FontFace = font(Enum.FontWeight.SemiBold),
+		TextSize = 16,
 		TextTruncate = Enum.TextTruncate.AtEnd,
 	})
-	text(card, {
-		Position = UDim2.fromOffset(74, 35),
-		Size = UDim2.new(1, -90, 0, 32),
-		Text = o.Content or "",
-		TextSize = 13,
-		TextColor3 = Col.Sub,
-		TextWrapped = true,
-		TextYAlignment = Enum.TextYAlignment.Top,
-		TextTruncate = Enum.TextTruncate.AtEnd,
-	})
-	-- time left, as a thin line along the bottom
-	local bar = create("Frame", {
-		AnchorPoint = Vector2.new(0, 1),
-		Position = UDim2.new(0, 0, 1, 0),
-		Size = UDim2.new(1, 0, 0, 2),
-		BackgroundColor3 = Library.Accent:Lerp(WHITE, 0.3),
-		BackgroundTransparency = 0.2,
-		BorderSizePixel = 0,
-		Parent = card,
-	})
+	if hasContent then
+		text(card, {
+			Position = UDim2.fromOffset(68, 33),
+			Size = UDim2.new(1, -82, 0, 20),
+			Text = tostring(o.Content),
+			TextSize = 13,
+			TextColor3 = Col.PsText,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		})
+	end
 
-	tween(slot, { Size = UDim2.new(1, 0, 0, H + 10) }, 0.3)
-	tween(card, { Position = UDim2.fromOffset(0, 0), GroupTransparency = 0 }, 0.5)
-	tween(bar, { Size = UDim2.new(0, 0, 0, 2) }, duration, Enum.EasingStyle.Linear)
+	-- drops in from above and fades in, like the console
+	tween(slot, { Size = UDim2.new(1, 0, 0, H + 8) }, 0.25)
+	tween(card, { Position = UDim2.fromOffset(0, 0), GroupTransparency = 0 }, 0.4)
 	sfx("Notify")
 
 	task.delay(duration, function()
 		if not slot.Parent then return end
-		tween(card, { Position = UDim2.fromOffset(380, 0), GroupTransparency = 1 }, 0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		tween(card, { Position = UDim2.fromOffset(0, -12), GroupTransparency = 1 }, 0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 		task.wait(0.28)
 		local t = tween(slot, { Size = UDim2.new(1, 0, 0, 0) }, 0.25)
 		t.Completed:Wait()
@@ -1750,29 +1748,47 @@ function Library:CreateWindow(settings)
 		Text = "",
 		Parent = modal,
 	})
+	-- PS5 options sheet: dark panel on the right, full height, slides in from the side
+	local SHEET_W = 360
 	local panel = create("CanvasGroup", {
-		AnchorPoint = CENTER,
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(380, 300),
-		BackgroundColor3 = Col.Panel,
-		BackgroundTransparency = 0.02,
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, 40, 0.5, 0),
+		Size = UDim2.new(0, SHEET_W, 1, -24),
+		BackgroundColor3 = Col.Ps,
+		BackgroundTransparency = 0.03,
 		GroupTransparency = 1,
 		BorderSizePixel = 0,
 		Parent = modal,
 	})
-	corner(panel, 18)
+	corner(panel, 16)
+	local panelEdge = create("Frame", {
+		Size = UDim2.new(1, -2, 1, -2),
+		Position = UDim2.fromOffset(1, 1),
+		BackgroundTransparency = 1,
+		Parent = panel,
+	})
+	corner(panelEdge, 15)
+	stroke(panelEdge, WHITE, 1, 0.92)
 	local panelScale = create("UIScale", { Parent = panel })
 	local panelTitle = text(panel, {
-		Position = UDim2.fromOffset(24, 18),
-		Size = UDim2.new(1, -48, 0, 26),
+		Position = UDim2.fromOffset(24, 20),
+		Size = UDim2.new(1, -48, 0, 24),
 		Text = "",
-		FontFace = font(Enum.FontWeight.Bold),
-		TextSize = 20,
+		FontFace = font(Enum.FontWeight.SemiBold),
+		TextSize = 18,
 		TextTruncate = Enum.TextTruncate.AtEnd,
 	})
+	create("Frame", { -- thin divider under the title
+		Position = UDim2.fromOffset(24, 56),
+		Size = UDim2.new(1, -48, 0, 1),
+		BackgroundColor3 = WHITE,
+		BackgroundTransparency = 0.88,
+		BorderSizePixel = 0,
+		Parent = panel,
+	})
 	local panelList = create("ScrollingFrame", {
-		Position = UDim2.fromOffset(12, 58),
-		Size = UDim2.new(1, -24, 1, -68),
+		Position = UDim2.fromOffset(12, 66),
+		Size = UDim2.new(1, -24, 1, -78),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 3,
@@ -1782,8 +1798,8 @@ function Library:CreateWindow(settings)
 		CanvasSize = UDim2.new(),
 		Parent = panel,
 	})
-	create("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = panelList })
-	create("UIPadding", { PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 4), Parent = panelList })
+	create("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = panelList })
+	create("UIPadding", { PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 4), PaddingTop = UDim.new(0, 2), Parent = panelList })
 
 	local menuOpen, menuToken = false, 0
 	local function closeMenu()
@@ -1792,9 +1808,8 @@ function Library:CreateWindow(settings)
 		menuToken += 1
 		local mine = menuToken
 		tween(modal, { BackgroundTransparency = 1 }, 0.2)
-		tween(panel, { GroupTransparency = 1 }, 0.18)
-		tween(panelScale, { Scale = 0.95 }, 0.2)
-		task.delay(0.22, function()
+		tween(panel, { GroupTransparency = 1, Position = UDim2.new(1, 40, 0.5, 0) }, 0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		task.delay(0.24, function()
 			if mine == menuToken then modal.Visible = false end
 		end)
 	end
@@ -1805,12 +1820,11 @@ function Library:CreateWindow(settings)
 			if c:IsA("TextButton") then c:Destroy() end
 		end
 		panelTitle.Text = title
-		local rows = math.clamp(#options, 1, 7)
-		panel.Size = UDim2.fromOffset(380, 70 + rows * 44 + 4)
+		local radio = current ~= nil -- a choice list gets radio circles; an action list (account menu) doesn't
 		for i, opt in ipairs(options) do
-			local isCurrent = tostring(opt) == tostring(current)
+			local isCurrent = radio and tostring(opt) == tostring(current)
 			local b = create("TextButton", {
-				Size = UDim2.new(1, 0, 0, 40),
+				Size = UDim2.new(1, 0, 0, 46),
 				BackgroundColor3 = WHITE,
 				BackgroundTransparency = 1,
 				AutoButtonColor = false,
@@ -1819,32 +1833,54 @@ function Library:CreateWindow(settings)
 				Parent = panelList,
 			})
 			corner(b, 10)
+			local glow = stroke(b, WHITE, 2, 1) -- the console's soft focus outline
 			local lbl = text(b, {
 				Position = UDim2.fromOffset(16, 0),
-				Size = UDim2.new(1, -52, 1, 0),
+				Size = UDim2.new(1, radio and -60 or -32, 1, 0),
 				Text = tostring(opt),
-				FontFace = font(Enum.FontWeight.Medium),
+				FontFace = font(isCurrent and Enum.FontWeight.SemiBold or Enum.FontWeight.Medium),
 				TextSize = 16,
 				TextTruncate = Enum.TextTruncate.AtEnd,
 			})
-			if isCurrent then
-				local dot = create("Frame", {
+			local ring, fill
+			if radio then
+				ring = create("Frame", {
 					AnchorPoint = Vector2.new(1, 0.5),
 					Position = UDim2.new(1, -16, 0.5, 0),
-					Size = UDim2.fromOffset(8, 8),
-					BackgroundColor3 = accent,
-					BorderSizePixel = 0,
+					Size = UDim2.fromOffset(20, 20),
+					BackgroundTransparency = 1,
 					Parent = b,
 				})
-				round(dot)
+				round(ring)
+				local ringStroke = stroke(ring, WHITE, 2, isCurrent and 0 or 0.45)
+				fill = create("Frame", {
+					AnchorPoint = CENTER,
+					Position = UDim2.fromScale(0.5, 0.5),
+					Size = UDim2.fromOffset(10, 10),
+					BackgroundColor3 = WHITE,
+					BackgroundTransparency = isCurrent and 0 or 1,
+					BorderSizePixel = 0,
+					Parent = ring,
+				})
+				round(fill)
+				b.MouseEnter:Connect(function()
+					tween(ringStroke, { Color = BLACK, Transparency = isCurrent and 0 or 0.4 }, 0.12)
+					tween(fill, { BackgroundColor3 = BLACK }, 0.12)
+				end)
+				b.MouseLeave:Connect(function()
+					tween(ringStroke, { Color = WHITE, Transparency = isCurrent and 0 or 0.45 }, 0.12)
+					tween(fill, { BackgroundColor3 = WHITE }, 0.12)
+				end)
 			end
 			b.MouseEnter:Connect(function()
 				sfx("Move")
 				tween(b, { BackgroundTransparency = 0 }, 0.12)
+				tween(glow, { Transparency = 0.6 }, 0.12)
 				tween(lbl, { TextColor3 = BLACK }, 0.12)
 			end)
 			b.MouseLeave:Connect(function()
 				tween(b, { BackgroundTransparency = 1 }, 0.12)
+				tween(glow, { Transparency = 1 }, 0.12)
 				tween(lbl, { TextColor3 = WHITE }, 0.12)
 			end)
 			b.MouseButton1Click:Connect(function()
@@ -1853,14 +1889,25 @@ function Library:CreateWindow(settings)
 				onPick(opt)
 			end)
 		end
+		-- scroll so the current choice is in view
 		panelList.CanvasPosition = Vector2.zero
+		if radio then
+			for i, opt in ipairs(options) do
+				if tostring(opt) == tostring(current) then
+					task.defer(function()
+						panelList.CanvasPosition = Vector2.new(0, math.max(0, (i - 1) * 48 - 96))
+					end)
+					break
+				end
+			end
+		end
 		modal.Visible = true
 		modal.BackgroundTransparency = 1
 		panel.GroupTransparency = 1
-		panelScale.Scale = 1.06
-		tween(modal, { BackgroundTransparency = 0.65 }, 0.25)
-		tween(panel, { GroupTransparency = 0 }, 0.3)
-		tween(panelScale, { Scale = 1 }, 0.35)
+		panel.Position = UDim2.new(1, 40, 0.5, 0)
+		panelScale.Scale = 1
+		tween(modal, { BackgroundTransparency = 0.55 }, 0.25)
+		tween(panel, { GroupTransparency = 0, Position = UDim2.new(1, -12, 0.5, 0) }, 0.35)
 	end
 	scrim.MouseButton1Click:Connect(closeMenu)
 
