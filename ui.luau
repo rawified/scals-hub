@@ -7,7 +7,7 @@
 		Library:CreateWindow({
 			Name = "My Hub",
 			ToggleKey = Enum.KeyCode.RightShift,
-			Theme = "Dark",                -- Dark | Light | Ocean | Rose | Forest | Monochrome
+			Theme = "Dark",                -- Dark | Light | Ocean | Rose | Forest | Halloween | Christmas | Monochrome
 			InfoBar = true,                -- ping / fps / time bar, top right
 			ConfigurationSaving = {        -- autosave (on by default)
 				Enabled = true,
@@ -199,6 +199,27 @@ local Themes = {
 		SubText = Color3.fromRGB(150, 180, 162),
 		Stroke = Color3.fromRGB(60, 94, 74),
 	},
+	Halloween = {
+		Background = Color3.fromRGB(16, 11, 22),
+		Topbar = Color3.fromRGB(26, 17, 34),
+		Element = Color3.fromRGB(34, 22, 44),
+		ElementHover = Color3.fromRGB(50, 32, 62),
+		Accent = Color3.fromRGB(255, 122, 24),
+		Text = Color3.fromRGB(255, 238, 220),
+		SubText = Color3.fromRGB(176, 150, 170),
+		Stroke = Color3.fromRGB(84, 50, 92),
+		Knob = Color3.fromRGB(16, 11, 22), -- dark knob on the orange "on" track
+	},
+	Christmas = {
+		Background = Color3.fromRGB(11, 26, 19),
+		Topbar = Color3.fromRGB(17, 38, 28),
+		Element = Color3.fromRGB(22, 48, 35),
+		ElementHover = Color3.fromRGB(32, 68, 49),
+		Accent = Color3.fromRGB(226, 52, 60),
+		Text = Color3.fromRGB(246, 250, 244),
+		SubText = Color3.fromRGB(160, 188, 168),
+		Stroke = Color3.fromRGB(52, 98, 72),
+	},
 	Monochrome = {
 		Background = Color3.fromRGB(12, 12, 12),
 		Topbar = Color3.fromRGB(20, 20, 20),
@@ -211,7 +232,7 @@ local Themes = {
 		Knob = Color3.fromRGB(12, 12, 12), -- dark knob on the white "on" track
 	},
 }
-local ThemeOrder = { "Dark", "Light", "Ocean", "Rose", "Forest", "Monochrome" }
+local ThemeOrder = { "Dark", "Light", "Ocean", "Rose", "Forest", "Halloween", "Christmas", "Monochrome" }
 
 for _, t in pairs(Themes) do
 	t.Knob = t.Knob or Color3.new(1, 1, 1)
