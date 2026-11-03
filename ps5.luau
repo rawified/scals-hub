@@ -33,6 +33,10 @@
 			Section = "Items",                 -- heading over the first row of cards
 			ButtonText = "Explore",            -- button under the title, scrolls down to the items
 			PlaceId = 142823291,               -- adds a white Play button that teleports you to that game
+			ForGame = { 142823291 },           -- which game this tile is for (ids or a function), used to
+			                                   -- put it first and open on it when you're in that game.
+			                                   -- Defaults to Game / PlaceId. Tiles without any = universal:
+			                                   -- order is your game, universal tiles, other games, Settings.
 			                                   -- ("Rejoin" when you're already in it)
 			Premium = true,                    -- only premium users can use anything on this tab
 		})
@@ -2327,12 +2331,29 @@ function Library:CreateWindow(settings)
 			selectTab(e)
 		end)
 
-		-- the Settings tile always stays last
-		if _internal or not settingsEntry then
-			table.insert(tiles, e)
+		-- Tile order: the game you're in, then universal tiles, then other games, Settings last.
+		-- Which game a tile is for: ForGame (doesn't lock anything), else Game, else PlaceId.
+		local tileSpec = opts.ForGame
+		if tileSpec == nil and opts.Game ~= nil and opts.Game ~= true then tileSpec = opts.Game end
+		if tileSpec == nil then tileSpec = tonumber(opts.PlaceId) end
+		e.thisGame = tileSpec ~= nil and gameMatches(tileSpec)
+		if _internal then
+			e.rank = 4
+		elseif e.thisGame then
+			e.rank = 1
+		elseif tileSpec == nil then
+			e.rank = 2 -- universal
 		else
-			table.insert(tiles, #tiles, e)
+			e.rank = 3
 		end
+		local at = #tiles + 1
+		for i, other in ipairs(tiles) do
+			if other.rank > e.rank then
+				at = i
+				break
+			end
+		end
+		table.insert(tiles, at, e)
 		task.spawn(function()
 			local w = textWidth(name, 20, Enum.FontWeight.SemiBold) -- exact width (may yield)
 			if w ~= e.nameW then
@@ -3384,13 +3405,12 @@ function Library:CreateWindow(settings)
 		end
 
 		Tab._entry = e
-		local forThisGame = not _internal and not pickedGame
-			and ((e.gameSpec ~= nil and gameMatches(e.gameSpec)) or (tonumber(opts.PlaceId) == game.PlaceId))
-		if forThisGame then
-			pickedGame = true -- you're in this tab's game: open on it
+		-- open on the first tile (the game you're in, or else a universal one)
+		if e.thisGame and not pickedGame then
+			pickedGame = true
 			selectTab(e, true)
-		elseif not _internal and (not selected or selected.internal) and not lastNormal then
-			selectTab(e, true)
+		elseif not pickedGame and tiles[1] and not tiles[1].internal and selected ~= tiles[1] then
+			selectTab(tiles[1], true)
 		elseif selected then
 			layoutTiles(false)
 		end
