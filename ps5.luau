@@ -1214,12 +1214,19 @@ function Library:CreateWindow(settings)
 	local function makeBgLayer()
 		local layer = create("CanvasGroup", {
 			Size = UDim2.fromScale(1, 1),
-			BackgroundColor3 = WHITE,
+			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			GroupTransparency = 1,
 			Parent = bg,
 		})
-		local grad = create("UIGradient", { Rotation = 25, Parent = layer })
+		-- gradient on its own frame (on the CanvasGroup itself it would tint the picture + lights too)
+		local base = create("Frame", {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundColor3 = WHITE,
+			BorderSizePixel = 0,
+			Parent = layer,
+		})
+		local grad = create("UIGradient", { Rotation = 25, Parent = base })
 		local img = create("ImageLabel", {
 			AnchorPoint = CENTER,
 			Position = UDim2.fromScale(0.5, 0.5),
@@ -3495,12 +3502,20 @@ function Library:CreateLoader(settings)
 	local outerGlow = softGlow(holder, 20, accent:Lerp(WHITE, 0.3), 6, 6)
 	local screen = create("CanvasGroup", {
 		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = WHITE,
+		BackgroundColor3 = Color3.fromRGB(34, 96, 196),
 		BorderSizePixel = 0,
 		GroupTransparency = 1,
 		Parent = holder,
 	})
 	corner(screen, fullscreen and 0 or 18)
+	-- The gradient lives on its own frame: a UIGradient directly on a CanvasGroup tints
+	-- EVERYTHING inside it (text, avatar...), which made the whole screen dark.
+	local bgFrame = create("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = WHITE,
+		BorderSizePixel = 0,
+		Parent = screen,
+	})
 	local bgGrad = create("UIGradient", {
 		Rotation = 100,
 		Color = ColorSequence.new({
@@ -3508,7 +3523,7 @@ function Library:CreateLoader(settings)
 			ck(0.5, Color3.fromRGB(34, 96, 196)),
 			ck(1, Color3.fromRGB(14, 46, 120)),
 		}),
-		Parent = screen,
+		Parent = bgFrame,
 	})
 
 	-- soft light blobs + floating specks
