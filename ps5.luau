@@ -1508,6 +1508,31 @@ function Library:CreateWindow(settings)
 	-- Teleport (Play button)
 	------------------------------------------------------------------
 	local TeleportService = game:GetService("TeleportService")
+	-- Executors name this differently, and some only put it in getgenv(), so look everywhere
+	local function findQueueOnTeleport()
+		local places = { getfenv and getfenv(0) or {}, env() }
+		local names = { "queue_on_teleport", "queueonteleport", "queueteleport", "queue_teleport" }
+		for _, tbl in ipairs(places) do
+			for _, n in ipairs(names) do
+				local ok, f = pcall(function() return tbl[n] end)
+				if ok and type(f) == "function" then return f, n end
+			end
+			for _, ns in ipairs({ "syn", "fluxus", "volt", "Volt" }) do
+				local ok, lib = pcall(function() return tbl[ns] end)
+				if ok and type(lib) == "table" then
+					for _, n in ipairs(names) do
+						if type(lib[n]) == "function" then return lib[n], ns .. "." .. n end
+					end
+				end
+			end
+		end
+		return nil
+	end
+	Window.QueueOnTeleportFunction = function()
+		local _, n = findQueueOnTeleport()
+		return n
+	end
+
 	local teleportReset -- set while a teleport is in progress: puts the button back and says why
 	local function teleportTo(placeId, button, label)
 		if teleportReset then return end
@@ -1525,10 +1550,28 @@ function Library:CreateWindow(settings)
 		button.Text = "Teleporting..."
 		Library:Notify({ Title = "Teleporting", Content = "Joining " .. label .. "...", Duration = 4 })
 		if type(settings.QueueOnTeleport) == "string" then
-			local q = (typeof(queue_on_teleport) == "function" and queue_on_teleport)
-				or (typeof(queueonteleport) == "function" and queueonteleport)
-				or (type(syn) == "table" and syn.queue_on_teleport)
-			if q then pcall(q, settings.QueueOnTeleport) end
+			local q, qName = findQueueOnTeleport()
+			if q then
+				-- Queued code runs as soon as the new server starts, before the game has loaded,
+				-- so it has to wait for the game + LocalPlayer itself or the loader errors silently.
+				local code = "if not game:IsLoaded() then game.Loaded:Wait() end\n"
+					.. "local Players = game:GetService('Players')\n"
+					.. "while not Players.LocalPlayer do task.wait() end\n"
+					.. "Players.LocalPlayer:WaitForChild('PlayerGui')\n"
+					.. "task.wait(1)\n"
+					.. settings.QueueOnTeleport
+				local queued, qErr = pcall(q, code)
+				if not queued then
+					warn("[PS5Library] " .. qName .. " failed: " .. tostring(qErr))
+				end
+			else
+				warn("[PS5Library] No queue_on_teleport in this executor; the hub won't reload after teleporting.")
+				Library:Notify({
+					Title = "Hub won't reload",
+					Content = "Your executor can't queue scripts across teleports. Put the loader in its autoexec folder.",
+					Duration = 6,
+				})
+			end
 		end
 		local ok, err = pcall(function()
 			TeleportService:Teleport(placeId, player)
