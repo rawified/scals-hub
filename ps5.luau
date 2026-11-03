@@ -1554,13 +1554,33 @@ function Library:CreateWindow(settings)
 			if q then
 				-- Queued code runs as soon as the new server starts, before the game has loaded,
 				-- so it has to wait for the game + LocalPlayer itself or the loader errors silently.
-				local code = "if not game:IsLoaded() then game.Loaded:Wait() end\n"
-					.. "local Players = game:GetService('Players')\n"
-					.. "while not Players.LocalPlayer do task.wait() end\n"
-					.. "Players.LocalPlayer:WaitForChild('PlayerGui')\n"
-					.. "task.wait(1)\n"
-					.. settings.QueueOnTeleport
+				-- It also shows Roblox toasts in the new server ("reloading" / the error), so a failure is visible
+				-- without opening F9, and clears the "already running" flag: executors like Volt keep getgenv()
+				-- between servers, so a leftover flag would make the loader quit straight away.
+				local code = table.concat({
+					"if not game:IsLoaded() then game.Loaded:Wait() end",
+					"local Players = game:GetService('Players')",
+					"while not Players.LocalPlayer do task.wait() end",
+					"Players.LocalPlayer:WaitForChild('PlayerGui')",
+					"task.wait(1)",
+					"local function toast(t, m) pcall(function() game:GetService('StarterGui'):SetCore('SendNotification', { Title = t, Text = m, Duration = 6 }) end) end",
+					"toast(" .. string.format("%q", windowName) .. ", 'Reloading after teleport...')",
+					"local g = (getgenv and getgenv()) or _G",
+					"g.ScalsLoaderRunning = nil",
+					"g.GuiLibrarySplashShown = nil",
+					"local fn, compileErr = loadstring(" .. string.format("%q", settings.QueueOnTeleport) .. ")",
+					"if not fn then toast('Reload failed', tostring(compileErr)); warn('[PS5Library] queued code: ' .. tostring(compileErr)); return end",
+					"local ok, err = pcall(fn)",
+					"if not ok then toast('Reload failed', tostring(err)); warn('[PS5Library] queued code: ' .. tostring(err)) end",
+				}, "\n")
+				-- only one copy, even after several Play presses / a failed teleport
+				local clear = (type(clearqueueonteleport) == "function" and clearqueueonteleport)
+					or (type(env().clearqueueonteleport) == "function" and env().clearqueueonteleport)
+				if clear then pcall(clear) end
 				local queued, qErr = pcall(q, code)
+				if queued then
+					print("[PS5Library] Queued the reload with " .. qName)
+				end
 				if not queued then
 					warn("[PS5Library] " .. qName .. " failed: " .. tostring(qErr))
 				end
