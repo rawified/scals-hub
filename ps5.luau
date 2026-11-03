@@ -262,6 +262,25 @@ local function resolveImage(img)
 	return nil
 end
 
+-- Game check for Game = ... options: a PlaceId, a list of PlaceIds / GameIds, or a function
+-- returning true when you're in that game (handy when you don't know the PlaceId).
+local function gameMatches(spec)
+	if spec == nil then return true end
+	if type(spec) == "function" then
+		local ok, r = pcall(spec)
+		return ok and r == true
+	end
+	if type(spec) == "number" then spec = { spec } end
+	if type(spec) == "table" then
+		for _, id in ipairs(spec) do
+			if id == game.PlaceId or id == game.GameId then return true end
+		end
+		return false
+	end
+	return true
+end
+Library.InGame = gameMatches
+
 -- Soft glow behind something: stacked rounded frames (no image assets needed)
 local function softGlow(parent, radius, color, layers, step)
 	local list = {}
@@ -1648,7 +1667,7 @@ function Library:CreateWindow(settings)
 
 	-- Locked thing pressed: little shake + a (rate limited) notification
 	local lastDenied = 0
-	local function denied(target)
+	local function denied(target, title, content)
 		sfx("Select")
 		if target then
 			task.spawn(function()
@@ -1661,8 +1680,8 @@ function Library:CreateWindow(settings)
 		if os.clock() - lastDenied > 2 then
 			lastDenied = os.clock()
 			Library:Notify({
-				Title = "Premium only",
-				Content = settings.PremiumText or "Get a premium key to unlock this.",
+				Title = title or "Premium only",
+				Content = content or settings.PremiumText or "Get a premium key to unlock this.",
 				Duration = 3,
 			})
 		end
@@ -2107,6 +2126,9 @@ function Library:CreateWindow(settings)
 			if not premiumLocked then
 				setPremiumState(detectPremium())
 			end
+			for _, fn in ipairs(premiumListeners) do
+				task.spawn(fn, isPremium)
+			end
 		end
 	end))
 
@@ -2121,6 +2143,7 @@ function Library:CreateWindow(settings)
 	-- CreateTab
 	------------------------------------------------------------------
 	local settingsEntry
+	local pickedGame = false
 	function Window:CreateTab(name, opts, _internal)
 		if type(opts) == "string" or type(opts) == "number" then
 			opts = { Image = opts }
@@ -2141,7 +2164,24 @@ function Library:CreateWindow(settings)
 			nameW = estimateWidth(name, 20),
 			cards = {},
 			premium = opts.Premium == true,
+			-- Game = true uses this tab's PlaceId
+			gameSpec = (opts.Game == true) and tonumber(opts.PlaceId) or opts.Game,
+			gameName = opts.GameName or opts.Title or name,
 		}
+		-- which game an element is for: its own Game (true = this tab's PlaceId), else the tab's
+		local function specFor(o)
+			local s = o and o.Game
+			if s == true then s = tonumber(opts.PlaceId) end
+			if s == nil then s = e.gameSpec end
+			return s
+		end
+		-- "game" when you're not in the element's game, "premium" when it needs premium, else nil
+		local function lockReason(o)
+			local spec = specFor(o)
+			if spec ~= nil and not gameMatches(spec) then return "game" end
+			if (e.premium or (o and o.Premium == true)) and not isPremium then return "premium" end
+			return nil
+		end
 		-- true when this thing needs premium and the user doesn't have it
 		local function isLocked(o)
 			return (e.premium or (o and o.Premium == true)) and not isPremium
@@ -2450,14 +2490,17 @@ function Library:CreateWindow(settings)
 			return order
 		end
 		local function newSection(title)
-			local header = text(page, {
-				Size = UDim2.new(1, 0, 0, 30),
-				Text = title,
-				FontFace = font(Enum.FontWeight.SemiBold),
-				TextSize = 20,
-				LayoutOrder = nextOrder(),
-			})
-			create("UIPadding", { PaddingLeft = UDim.new(0, 8), Parent = header })
+			local header
+			if title then
+				header = text(page, {
+					Size = UDim2.new(1, 0, 0, 30),
+					Text = title,
+					FontFace = font(Enum.FontWeight.SemiBold),
+					TextSize = 20,
+					LayoutOrder = nextOrder(),
+				})
+				create("UIPadding", { PaddingLeft = UDim.new(0, 8), Parent = header })
+			end
 			local grid = create("Frame", {
 				Size = UDim2.new(1, 0, 0, 0),
 				AutomaticSize = Enum.AutomaticSize.Y,
@@ -2480,7 +2523,36 @@ function Library:CreateWindow(settings)
 			return header
 		end
 
+		-- A full-width glass panel for your own UI (lists, grids, previews). Cards made after it
+		-- continue in a new row below. Returns the Frame to put things in.
+		local madeGrid = false
+		function Tab:CreateContainer(height)
+			if not madeGrid then newSection(opts.Section or "Items") end
+			madeGrid = true
+			local wrapper = create("Frame", {
+				Size = UDim2.new(1, 0, 0, (height or 300) + 16),
+				BackgroundTransparency = 1,
+				LayoutOrder = nextOrder(),
+				Parent = page,
+			})
+			local panelFrame = create("Frame", {
+				Position = UDim2.fromOffset(8, 8),
+				Size = UDim2.new(1, -16, 1, -16),
+				BackgroundColor3 = WHITE,
+				BackgroundTransparency = CARD_ALPHA,
+				BorderSizePixel = 0,
+				Parent = wrapper,
+			})
+			corner(panelFrame, 14)
+			stroke(panelFrame, WHITE, 1, 0.75)
+			currentGrid = nil
+			itemCount += 1
+			countChip.Text = itemCount == 1 and "1 item" or (itemCount .. " items")
+			return panelFrame
+		end
+
 		function Tab:CreateSection(title)
+			madeGrid = true
 			local header = newSection(title or "Section")
 			return { Set = function(_, t) header.Text = t end }
 		end
@@ -2513,7 +2585,10 @@ function Library:CreateWindow(settings)
 		end
 
 		local function newCard(o, kind)
-			if not currentGrid then newSection(opts.Section or "Items") end
+			if not currentGrid then
+				newSection(not madeGrid and (opts.Section or "Items") or nil)
+				madeGrid = true
+			end
 			itemCount += 1
 			countChip.Text = itemCount == 1 and "1 item" or (itemCount .. " items")
 
@@ -2630,10 +2705,11 @@ function Library:CreateWindow(settings)
 					end
 				end,
 			}
-			-- Premium lock: dims the card, adds a gold PREMIUM tag and swallows every click on it
-			-- (ZIndex 10, so it sits above whatever the element adds to the card afterwards)
-			card.locked = function() return isLocked(o) end
-			if e.premium or o.Premium == true then
+			-- Lock: dims the card, adds a tag (gold PREMIUM / blue ONLY IN <game>) and swallows every
+			-- click on it (ZIndex 10, so it sits above whatever the element adds to the card afterwards)
+			card.locked = function() return lockReason(o) ~= nil end
+			if e.premium or o.Premium == true or specFor(o) ~= nil then
+				local gameName = o.GameName or e.gameName
 				local lockLayer = create("TextButton", {
 					Size = UDim2.fromScale(1, 1),
 					BackgroundColor3 = BLACK,
@@ -2662,21 +2738,46 @@ function Library:CreateWindow(settings)
 					SortOrder = Enum.SortOrder.LayoutOrder,
 					Parent = tag,
 				})
-				padlock(tag, 10, Color3.fromRGB(40, 28, 0), 1)
-				text(tag, {
+				local tagLock = padlock(tag, 10, Color3.fromRGB(40, 28, 0), 1)
+				local tagText = text(tag, {
 					Size = UDim2.fromOffset(0, 22),
 					AutomaticSize = Enum.AutomaticSize.X,
 					Text = "PREMIUM",
 					FontFace = font(Enum.FontWeight.Bold),
 					TextSize = 11,
 					TextColor3 = Color3.fromRGB(40, 28, 0),
+					TextTruncate = Enum.TextTruncate.AtEnd,
 					LayoutOrder = 2,
 				})
-				lockLayer.MouseButton1Click:Connect(function() denied(cardHolder) end)
-				lockLayer.MouseButton2Click:Connect(function() denied(cardHolder) end)
-				local function refresh() lockLayer.Visible = isLocked(o) end
+				create("UISizeConstraint", { MaxSize = Vector2.new(CARD_W - 40, 22), Parent = tag })
+				local function press()
+					if lockReason(o) == "game" then
+						denied(cardHolder, "Only in " .. gameName,
+							"This only works in " .. gameName .. ". Use Play on its tile to go there.")
+					else
+						denied(cardHolder)
+					end
+				end
+				lockLayer.MouseButton1Click:Connect(press)
+				lockLayer.MouseButton2Click:Connect(press)
+				card.denied = press
+				local function refresh()
+					local reason = lockReason(o)
+					lockLayer.Visible = reason ~= nil
+					if reason == "game" then
+						tag.BackgroundColor3 = WHITE
+						tagLock.Visible = false
+						tagText.Text = "ONLY IN " .. string.upper(gameName)
+						tagText.TextColor3 = Color3.fromRGB(20, 40, 90)
+					elseif reason == "premium" then
+						tag.BackgroundColor3 = Col.Gold
+						tagLock.Visible = true
+						tagText.Text = "PREMIUM"
+						tagText.TextColor3 = Color3.fromRGB(40, 28, 0)
+					end
+				end
 				refresh()
-				onPremium(refresh)
+				onPremium(refresh) -- also re-run every second (a Game = function() check can change)
 			end
 			table.insert(e.cards, card)
 			return card
@@ -2717,7 +2818,7 @@ function Library:CreateWindow(settings)
 
 			local function guarded()
 				if card.locked() then
-					denied(card.holder)
+					if card.denied then card.denied() else denied(card.holder) end
 					return
 				end
 				action()
@@ -3042,7 +3143,7 @@ function Library:CreateWindow(settings)
 			end)
 			render(value, true)
 			if fromSave then
-				task.defer(function() fire(o.Callback, value) end)
+				task.defer(function() if not card.locked() then fire(o.Callback, value) end end)
 			end
 			return Slider
 		end
@@ -3091,7 +3192,7 @@ function Library:CreateWindow(settings)
 				if o.RemoveTextAfterFocusLost then box.Text = "" end
 			end)
 			if fromSave then
-				task.defer(function() fire(o.Callback, box.Text) end)
+				task.defer(function() if not card.locked() then fire(o.Callback, box.Text) end end)
 			end
 			return {
 				Set = function(_, t)
@@ -3165,7 +3266,7 @@ function Library:CreateWindow(settings)
 				end)
 			end)
 			if fromSave then
-				task.defer(function() fire(o.Callback, current) end)
+				task.defer(function() if not card.locked() then fire(o.Callback, current) end end)
 			end
 			return Dropdown
 		end
@@ -3234,13 +3335,18 @@ function Library:CreateWindow(settings)
 			end)
 			card.slot.Destroying:Connect(function() pressConn:Disconnect() end)
 			if fromSave then
-				task.defer(function() fire(o.Changed, key) end)
+				task.defer(function() if not card.locked() then fire(o.Changed, key) end end)
 			end
 			return Keybind
 		end
 
 		Tab._entry = e
-		if not _internal and (not selected or selected.internal) and not lastNormal then
+		local forThisGame = not _internal and not pickedGame
+			and ((e.gameSpec ~= nil and gameMatches(e.gameSpec)) or (tonumber(opts.PlaceId) == game.PlaceId))
+		if forThisGame then
+			pickedGame = true -- you're in this tab's game: open on it
+			selectTab(e, true)
+		elseif not _internal and (not selected or selected.internal) and not lastNormal then
 			selectTab(e, true)
 		elseif selected then
 			layoutTiles(false)
@@ -3352,6 +3458,13 @@ function Library:CreateWindow(settings)
 		(canSave and ("Autosave: " .. filePath) or (saveEnabled and "Autosave: no file access here" or "Autosave: off"))
 			.. "\n" .. (globalFiles and ("Shared: " .. Library.GlobalSettingsFile) or "Shared settings: not saved")
 	)
+	if type(settings.ChangeKey) == "function" then
+		SettingsTab:CreateButton({
+			Name = "Change Key",
+			Description = "Sign in again with a different key",
+			Callback = settings.ChangeKey,
+		})
+	end
 	Window.SettingsTab = SettingsTab
 	-- tabs are usually made right after CreateWindow; only fall back to Settings if there are none
 	task.defer(function()
@@ -3365,7 +3478,9 @@ function Library:CreateWindow(settings)
 		g.GuiLibrarySplashShown = nil
 		splashOpts = false
 	end
-	if splashOpts == false then
+	if settings.StartHidden then
+		-- shown later with Window:SetVisible(true) (e.g. after signing in)
+	elseif splashOpts == false then
 		Window:SetVisible(true)
 	else
 		splashActive = true
@@ -3868,7 +3983,19 @@ function Library:CreateLoader(settings)
 	scrim.MouseButton1Click:Connect(closeDialog)
 
 	local shownOnce = false
+	local finished = false
+	local shown -- made further down (show / hide)
 	local function showPage(name)
+		if name == "main" and settings.Home == false then
+			-- no script picker: signing in finishes the loader and hands over to your hub
+			if finished then return end
+			finished = true
+			sfx("Select")
+			fire(settings.OnLoad)
+			local tw = tween(shown, { Value = 0 }, 0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+			tw.Completed:Connect(function() Loader:Destroy() end)
+			return
+		end
 		local p = pages[name]
 		if not p or currentName == name then return end
 		closeDialog()
@@ -4616,7 +4743,7 @@ function Library:CreateLoader(settings)
 	------------------------------------------------------------------
 	-- Show / hide, per-frame motion
 	------------------------------------------------------------------
-	local shown = num(0)
+	shown = num(0)
 	local baseScale = 1
 	local function applyShown()
 		local v = shown.Value
@@ -4689,8 +4816,8 @@ function Library:CreateLoader(settings)
 		shown:Destroy()
 	end)
 
-	-- Start on the user screen: boot animation first (if asked), then zoom in
-	showPage("user")
+	-- Start on the user screen (or StartScreen = "key"): boot animation first (if asked), then zoom in
+	showPage(settings.StartScreen == "key" and hasKeyPage and "key" or "user")
 	local function reveal()
 		if gui.Parent then
 			tween(shown, { Value = 1 }, 0.6, Enum.EasingStyle.Quint)
