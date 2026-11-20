@@ -19,7 +19,7 @@
         })
         S.recoilControl(true / false)            -- pulls the gun back down while you shoot
         S.getAimTarget()                         -- the Player / NPC it's locked on, or nil
-        S.getWeapon()                            -- stats of the gun you're holding, or nil
+        S.getWeapon()                            -- stats of your active gun (Backpack.K433 etc.), or nil
         S.Weapons                                -- every gun: interval, mag, spread, aimFov, kick, damage
         S.hasMouseMove()
         S.Aim                                    -- current settings
@@ -159,8 +159,9 @@ local Weapons = {
 U.Weapons = Weapons
 local DEFAULT_GUN = { interval = 0.09, aimFov = 35, spread = { hip = 1.5, aim = 0.06 }, aimKick = V(0.35, 0.3, 1), hipKick = V(1.1, 0.6, 1.2) }
 
--- the gun you're holding: a Tool / model named after it (K433 or "K-433") in your character or in
--- the camera (where the gun you see is), or an attribute on you / your character
+-- your gun: the game keeps the active gun in your Backpack, named by its id (Backpack.K433).
+-- Also checked: a Tool in your character (in case it moves there while held), the camera (where
+-- the gun you see in first person lives) and a Weapon / Equipped attribute on you
 local function weaponKey(s) return (tostring(s):lower():gsub("[^%w]", "")) end
 local byKey = {}
 for id, w in pairs(Weapons) do
@@ -193,7 +194,8 @@ local function getWeapon()
 	if now - lastWeaponCheck > 0.25 then
 		lastWeaponCheck = now
 		local char = player.Character
-		currentWeapon = findWeaponIn(char, 2) or findWeaponIn(workspace.CurrentCamera, 3)
+		currentWeapon = findWeaponIn(player:FindFirstChildOfClass("Backpack"), 1)
+			or findWeaponIn(char, 2) or findWeaponIn(workspace.CurrentCamera, 3)
 			or findWeaponAttribute(char) or findWeaponAttribute(player)
 	end
 	return currentWeapon
