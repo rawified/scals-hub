@@ -446,12 +446,15 @@ end
 ----------------------------------------------------------------------
 -- UNIVERSAL tile (libs/universal.lua)
 ----------------------------------------------------------------------
--- Player, Fly and ESP cards (Universal and Shooter); prefix keeps their saved values apart
-local function addPlayerFlyEsp(Tab, U, prefix)
+local function buildUniversal(Window, U)
+	local Tab = Window:CreateTab("Universal", {
+		Description = "Movement, fly, ESP and aimbot. Works in every game.",
+		Section = "Player",
+	})
 	Tab:CreateToggle({
 		Name = "Custom WalkSpeed",
 		CurrentValue = false,
-		Flag = prefix .. "WalkSpeedEnabled",
+		Flag = "WalkSpeedEnabled",
 		Callback = U.walkSpeed,
 	})
 	Tab:CreateSlider({
@@ -461,13 +464,13 @@ local function addPlayerFlyEsp(Tab, U, prefix)
 		Increment = 1,
 		Suffix = "studs/s",
 		CurrentValue = U.Settings.WalkSpeed,
-		Flag = prefix .. "WalkSpeed",
+		Flag = "WalkSpeed",
 		Callback = U.setWalkSpeed,
 	})
 	Tab:CreateToggle({
 		Name = "Infinite Jump",
 		CurrentValue = false,
-		Flag = prefix .. "InfiniteJump",
+		Flag = "InfiniteJump",
 		Callback = U.infiniteJump,
 	})
 
@@ -476,7 +479,7 @@ local function addPlayerFlyEsp(Tab, U, prefix)
 		Name = "Fly",
 		Description = "WASD where you look, Space up, Ctrl down",
 		CurrentValue = false,
-		Flag = prefix .. "Fly",
+		Flag = "Fly",
 		Callback = U.fly,
 	})
 	Tab:CreateDropdown({
@@ -484,7 +487,7 @@ local function addPlayerFlyEsp(Tab, U, prefix)
 		Description = "Platform: walk on a part that follows you",
 		Options = { "Noclip", "Platform" },
 		CurrentOption = U.Fly.Mode,
-		Flag = prefix .. "FlyMode",
+		Flag = "FlyMode",
 		Callback = function(v) U.setFly({ Mode = v }) end,
 	})
 	Tab:CreateSlider({
@@ -493,7 +496,7 @@ local function addPlayerFlyEsp(Tab, U, prefix)
 		Increment = 1,
 		Suffix = "studs/s",
 		CurrentValue = U.Fly.Speed,
-		Flag = prefix .. "FlySpeed",
+		Flag = "FlySpeed",
 		Callback = function(v) U.setFly({ Speed = v }) end,
 	})
 	Tab:CreateSlider({
@@ -502,13 +505,13 @@ local function addPlayerFlyEsp(Tab, U, prefix)
 		Increment = 1,
 		Suffix = "studs/s",
 		CurrentValue = U.Fly.VerticalSpeed,
-		Flag = prefix .. "FlyVerticalSpeed",
+		Flag = "FlyVerticalSpeed",
 		Callback = function(v) U.setFly({ VerticalSpeed = v }) end,
 	})
 	Tab:CreateToggle({
 		Name = "Show Platform",
 		CurrentValue = U.Fly.ShowPlatform,
-		Flag = prefix .. "FlyShowPlatform",
+		Flag = "FlyShowPlatform",
 		Callback = function(on) U.setFly({ ShowPlatform = on }) end,
 	})
 
@@ -518,7 +521,7 @@ local function addPlayerFlyEsp(Tab, U, prefix)
 			Name = name,
 			Description = desc,
 			CurrentValue = U.Esp[key],
-			Flag = prefix .. "Esp" .. key,
+			Flag = "Esp" .. key,
 			Callback = function(on) U.setEsp({ [key] = on }) end,
 		})
 	end
@@ -530,27 +533,18 @@ local function addPlayerFlyEsp(Tab, U, prefix)
 		Range = { 0, 1 },
 		Increment = 0.05,
 		CurrentValue = U.Esp.ChamsFill,
-		Flag = prefix .. "ChamsFill",
+		Flag = "ChamsFill",
 		Callback = function(v) U.setEsp({ ChamsFill = v }) end,
 	})
 	Tab:CreateDropdown({
 		Name = "ESP Color",
 		Options = U.EspColors,
 		CurrentOption = U.Esp.Color,
-		Flag = prefix .. "EspColor",
+		Flag = "EspColor",
 		Callback = function(c) U.setEsp({ Color = c }) end,
 	})
 	espToggle("Team Check", "TeamCheck")
 	espToggle("Include NPCs", "IncludeNPCs", "Models with a HumanoidRootPart")
-
-end
-
-local function buildUniversal(Window, U)
-	local Tab = Window:CreateTab("Universal", {
-		Description = "Movement, fly, ESP and aimbot. Works in every game.",
-		Section = "Player",
-	})
-	addPlayerFlyEsp(Tab, U, "")
 
 	Tab:CreateSection("Aimbot")
 	Tab:CreateToggle({
@@ -611,22 +605,20 @@ local function buildUniversal(Window, U)
 end
 
 ----------------------------------------------------------------------
--- SHOOTER tile (libs/shooter.lua): Universal's features + an aimbot tuned for this game's guns
+-- SHOOTER tile (libs/shooter.lua): mouse aimbot + recoil control tuned for this game's guns.
+-- WalkSpeed, Fly and ESP are on the Universal tile.
 ----------------------------------------------------------------------
 local SHOOTER_NAME = "Shooter"           -- rename to the game's name
 local SHOOTER_IDS = { 78884249003161 }   -- PlaceId or GameId (both are checked)
 
 local function buildShooter(Window, S)
 	local Tab = Window:CreateTab(SHOOTER_NAME, {
-		Description = "Movement, fly, ESP and an aimbot made for this game's guns.",
-		Section = "Player",
+		Description = "Aimbot and recoil control made for this game's guns.",
+		Section = "Aimbot",
 		ForGame = SHOOTER_IDS, -- first tile in this game
 		Game = SHOOTER_IDS,    -- every card only works in this game
 		GameName = SHOOTER_NAME,
 	})
-	addPlayerFlyEsp(Tab, S, "Shooter")
-
-	Tab:CreateSection("Aimbot")
 	local gunLabel = Tab:CreateLabel("Gun: none found yet")
 	local alive = true
 	Library:OnUnload(function() alive = false end)
@@ -644,7 +636,12 @@ local function buildShooter(Window, S)
 		Name = "Aimbot",
 		CurrentValue = false,
 		Flag = "ShooterAimbot",
-		Callback = S.aimbot,
+		Callback = function(on)
+			S.aimbot(on)
+			if on and not S.hasMouseMove() then
+				notify("Aimbot", "Your executor has no mousemoverel, so the aimbot can't move your mouse.", 5)
+			end
+		end,
 	})
 	local function aimOption(name, key, options, desc)
 		Tab:CreateDropdown({
@@ -653,12 +650,7 @@ local function buildShooter(Window, S)
 			Options = options,
 			CurrentOption = S.Aim[key],
 			Flag = "ShooterAim" .. key,
-			Callback = function(v)
-				S.setAimbot({ [key] = v })
-				if key == "Method" and v == "Mouse" and not S.hasMouseMove() then
-					notify("Aimbot", "Your executor has no mousemoverel, using Camera instead.", 4)
-				end
-			end,
+			Callback = function(v) S.setAimbot({ [key] = v }) end,
 		})
 	end
 	local function aimToggle(name, key, desc)
@@ -672,7 +664,6 @@ local function buildShooter(Window, S)
 	end
 	aimOption("Activation", "Activation", { "Hold Right Mouse", "Hold Left or Right Mouse", "Always" }, "Right mouse = aiming down sights")
 	aimOption("Aim Part", "Part", { "Auto", "Head", "Torso" }, "Auto: chest when hip fire would miss the head")
-	aimOption("Aim Method", "Method", { "Mouse", "Camera" }, "Mouse works with this game's camera")
 	aimToggle("Use FOV", "UseFov")
 	aimToggle("Show FOV Circle", "ShowFov")
 	Tab:CreateSlider({
@@ -704,7 +695,12 @@ local function buildShooter(Window, S)
 		Description = "Pulls down by your gun's kick while you shoot",
 		CurrentValue = false,
 		Flag = "ShooterRecoil",
-		Callback = S.recoilControl,
+		Callback = function(on)
+			S.recoilControl(on)
+			if on and not S.hasMouseMove() then
+				notify("Recoil Control", "Your executor has no mousemoverel, so this can't move your mouse.", 5)
+			end
+		end,
 	})
 	Tab:CreateSlider({
 		Name = "Recoil Strength",
