@@ -24,11 +24,12 @@ local REPO = "https://raw.githubusercontent.com/rawified/scals-hub/refs/heads/ma
 -- Jnkie settings (from your Jnkie dashboard)
 ----------------------------------------------------------------------
 local Jnkie = {
-	Service = "YOUR_SERVICE_NAME",       -- exact service name: Dashboard > your service
-	Identifier = "YOUR_JNKIE_USER_ID",   -- YOUR Jnkie user ID from the dashboard (not a Roblox or Discord ID)
-	Provider = "YOUR_PROVIDER_NAME",     -- the provider that makes the Get Key link (e.g. "Mixed")
+	Service = "scals",       -- exact service name: Dashboard > your service
+	Identifier = "1230449",   -- YOUR Jnkie user ID from the dashboard (not a Roblox or Discord ID)
+	Provider = "scals",     -- the provider that makes the Get Key link (e.g. "Mixed")
 	AllowKeyless = false,                -- true only if your service has keyless access turned on
 }
+
 
 ----------------------------------------------------------------------
 -- Hub settings
