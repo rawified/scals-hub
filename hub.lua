@@ -1186,10 +1186,10 @@ local saved, savedOk, savedReason -- the saved key, and whether it still works
 
 -- name, library file, tile builder
 local Sections = {
-	{ "Murder Mystery 2", "libs/mm2.lua", buildMM2 },
-	{ "Auto Tap", "libs/autotap.lua", buildAutoTap },
-	{ "Universal", "libs/universal.lua", buildUniversal },
-	{ SHOOTER_NAME, "libs/shooter.lua", buildShooter },
+	{ "Murder Mystery 2", "scripts/mm2.lua", buildMM2 },
+	{ "Auto Tap", "scripts/autotap.lua", buildAutoTap },
+	{ "Universal", "scripts/universal.lua", buildUniversal },
+	{ "Voxel Wars", "libs/shooter.lua", buildShooter },
 	{ "Outfit Editor", "libs/outfit.lua", buildOutfit },
 }
 local loadedLibs = {}
